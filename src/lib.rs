@@ -4,15 +4,12 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use futures::future::join_all;
-use lazy_static::lazy_static;
 use reqwest;
 use tokio::runtime::{Builder, Runtime};
 
-lazy_static! {
-    static ref RUNTIME: Runtime = Builder::new_current_thread().enable_all().build().unwrap();
-}
-lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
+thread_local! {
+    static RUNTIME: Runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    static CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
 async fn get_url(
@@ -20,8 +17,8 @@ async fn get_url(
     method: reqwest::Method,
     head: HashMap<&str, String>,
     body: Option<&str>,
-) -> reqwest::Result<Vec<u8>> {
-    let mut req = CLIENT.request(method, url);
+) -> reqwest::Result<Bytes> {
+    let mut req = CLIENT.with(|cl| cl.request(method, url));
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -30,11 +27,10 @@ async fn get_url(
         None => req,
     };
     let b: Bytes = req.send().await?.bytes().await?;
-    let u: Vec<u8> = Vec::from(b);
-    Ok(u)
+    Ok(b)
 }
 
-async fn get_url_or(url: &str, start: usize, end: usize) -> Vec<u8> {
+async fn get_url_or(url: &str, start: usize, end: usize) -> Bytes {
     let mut headers: HashMap<&str, String> = HashMap::new();
     if (start > 0) & (end != 0) {
         headers.insert(
@@ -44,18 +40,18 @@ async fn get_url_or(url: &str, start: usize, end: usize) -> Vec<u8> {
     }
     match get_url(url, reqwest::Method::GET, headers, None).await {
         Ok(text) => text,
-        Err(e) => e.to_string().as_bytes().into(),
+        Err(e) => e.to_string().into(),
     }
 }
 
 #[pyfunction]
 fn get_ranges<'a>(
-    py: pyo3::Python<'a>,
+    py: Python<'a>,
     urls: Vec<&str>,
     starts: Option<Vec<usize>>,
     ends: Option<Vec<usize>>,
 ) -> &'a PyTuple {
-    let mut result: Vec<Vec<u8>> = Vec::with_capacity(urls.len());
+    let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let coroutine = async {
         match (starts, ends) {
             (Some(st), Some(en)) => join_all(
@@ -81,7 +77,7 @@ fn get_ranges<'a>(
             _ => 0,
         }
     };
-    RUNTIME.block_on(coroutine);
+    RUNTIME.with(|rt| rt.block_on(coroutine));
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
