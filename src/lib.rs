@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyTuple};
 use std::collections::HashMap;
 
+use bytes::Bytes;
 use futures::future::join_all;
 use lazy_static::lazy_static;
 use reqwest;
@@ -18,7 +20,7 @@ async fn get_url(
     method: reqwest::Method,
     head: HashMap<&str, String>,
     body: Option<&str>,
-) -> reqwest::Result<String> {
+) -> reqwest::Result<Vec<u8>> {
     let mut req = CLIENT.request(method, url);
     for (key, value) in head.iter() {
         req = req.header(*key, value);
@@ -27,10 +29,12 @@ async fn get_url(
         Some(text) => req.body(text.to_string()),
         None => req,
     };
-    Ok(req.send().await?.text().await?)
+    let b: Bytes = req.send().await?.bytes().await?;
+    let u: Vec<u8> = Vec::from(b);
+    Ok(u)
 }
 
-async fn get_url_or(url: &str, start: usize, end: usize) -> String {
+async fn get_url_or(url: &str, start: usize, end: usize) -> Vec<u8> {
     let mut headers: HashMap<&str, String> = HashMap::new();
     if (start > 0) & (end != 0) {
         headers.insert(
@@ -40,17 +44,18 @@ async fn get_url_or(url: &str, start: usize, end: usize) -> String {
     }
     match get_url(url, reqwest::Method::GET, headers, None).await {
         Ok(text) => text,
-        Err(e) => e.to_string(),
+        Err(e) => e.to_string().as_bytes().into(),
     }
 }
 
 #[pyfunction]
-fn get_ranges(
+fn get_ranges<'a>(
+    py: pyo3::Python<'a>,
     urls: Vec<&str>,
     starts: Option<Vec<usize>>,
     ends: Option<Vec<usize>>,
-) -> Vec<String> {
-    let mut result: Vec<String> = Vec::with_capacity(urls.len());
+) -> &'a PyTuple {
+    let mut result: Vec<Vec<u8>> = Vec::with_capacity(urls.len());
     let coroutine = async {
         match (starts, ends) {
             (Some(st), Some(en)) => join_all(
@@ -77,7 +82,7 @@ fn get_ranges(
         }
     };
     RUNTIME.block_on(coroutine);
-    result
+    PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
 /// A Python module implemented in Rust.
