@@ -15,7 +15,7 @@ thread_local! {
 async fn get_url(
     url: &str,
     method: reqwest::Method,
-    head: HashMap<&str, String>,
+    head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
     let mut req = CLIENT.with(|cl| cl.request(method, url));
@@ -38,10 +38,17 @@ async fn get_url_or(url: &str, start: usize, end: usize) -> Bytes {
             format!("bytes={}-{}", start, end + 1).to_string(),
         );
     }
-    match get_url(url, reqwest::Method::GET, headers, None).await {
-        Ok(text) => text,
-        Err(e) => e.to_string().into(),
+    let mut e: Bytes = Bytes::new();
+
+    // Run maybe twice to deal with "connection was closing" situation
+    for _ in [1..2] {
+        let out = get_url(url, reqwest::Method::GET, &headers, None).await;
+        if out.is_ok() {
+            return out.unwrap();
+        }
+        e = out.err().unwrap().to_string().into()
     }
+    e
 }
 
 #[pyfunction]
