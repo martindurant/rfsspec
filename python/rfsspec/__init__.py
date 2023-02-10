@@ -1,0 +1,1 @@
+from rfsspec.http import RustyHTTPFileSystem

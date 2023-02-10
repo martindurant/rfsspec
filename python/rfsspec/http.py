@@ -21,7 +21,7 @@ def get_one(url, start=None, end=None, headers=None, method="GET"):
     )[0]
 
 
-class HTTPFileSystem(AbstractFileSystem):
+class RustyHTTPFileSystem(AbstractFileSystem):
     """
     Simple File-System for fetching data via HTTP(S)
 

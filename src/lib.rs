@@ -14,12 +14,11 @@ thread_local! {
 
 async fn get_url(
     url: &str,
-    method: &str,
+    method: &reqwest::Method,
     head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
-    let method = reqwest::Method::from_str(method).unwrap();
-    let mut req = CLIENT.with(|cl| cl.request(method, url));
+    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -36,7 +35,7 @@ async fn get_url_or(
     start: usize,
     end: usize,
     mut headers: HashMap<&str, String>,
-    method: &str,
+    method: &reqwest::Method,
 ) -> Bytes {
     if (start > 0) & (end != 0) {
         headers.insert(
@@ -58,7 +57,7 @@ async fn get_url_or(
     out.err().unwrap().to_string().into()
 }
 
-/// get_ranges(urls, /, starts=None, ends=None, headers=None, method=None)
+/// get_ranges(urls, starts=None, ends=None, headers=None, method=None)
 /// --
 ///
 /// urls: list[str]
@@ -67,6 +66,9 @@ async fn get_url_or(
 /// headers: dict[str, str]
 /// method: str | None
 #[pyfunction]
+#[pyo3(
+    text_signature = "(urls, /, starts=None, ends=None, headers=None, method=None)"
+)]
 fn get_ranges<'a>(
     py: Python<'a>,
     urls: Vec<&str>,
@@ -78,23 +80,23 @@ fn get_ranges<'a>(
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
+    let method = reqwest::Method::from_str(method).unwrap();
     let coroutine = async {
         match (starts, ends) {
-            (Some(st), Some(en)) => join_all(
-                urls.iter()
-                    .zip(st)
-                    .zip(en)
-                    .map(|((u, s), e)| get_url_or(*u, s, e, headers.clone(), method)),
-            )
-            .await
-            .iter()
-            .map(|s| result.push(s.clone()))
-            .into_iter()
-            .count(),
+            (Some(st), Some(en)) => {
+                join_all(urls.iter().zip(st).zip(en).map(|((u, s), e)| {
+                    get_url_or(*u, s, e, headers.clone(), &method)
+                }))
+                .await
+                .iter()
+                .map(|s| result.push(s.clone()))
+                .into_iter()
+                .count()
+            }
 
             (None, None) => join_all(
                 urls.iter()
-                    .map(|u| get_url_or(*u, 0, 0, headers.clone(), method)),
+                    .map(|u| get_url_or(*u, 0, 0, headers.clone(), &method)),
             )
             .await
             .iter()
