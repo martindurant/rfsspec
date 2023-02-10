@@ -13,9 +13,7 @@ thread_local! {
 }
 
 async fn get_url(
-    url: &str,
-    method: &reqwest::Method,
-    head: &HashMap<&str, String>,
+    url: &str, method: &reqwest::Method, head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
     let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
@@ -31,10 +29,7 @@ async fn get_url(
 }
 
 async fn get_url_or(
-    url: &str,
-    start: usize,
-    end: usize,
-    mut headers: HashMap<&str, String>,
+    url: &str, start: usize, end: usize, mut headers: HashMap<&str, String>,
     method: &reqwest::Method,
 ) -> Bytes {
     if (start > 0) & (end != 0) {
@@ -70,11 +65,8 @@ async fn get_url_or(
     text_signature = "(urls, /, starts=None, ends=None, headers=None, method=None)"
 )]
 fn get_ranges<'a>(
-    py: Python<'a>,
-    urls: Vec<&str>,
-    starts: Option<Vec<usize>>,
-    ends: Option<Vec<usize>>,
-    headers: Option<HashMap<&str, String>>,
+    py: Python<'a>, urls: Vec<&str>, starts: Option<Vec<usize>>,
+    ends: Option<Vec<usize>>, headers: Option<HashMap<&str, String>>,
     method: Option<&str>,
 ) -> &'a PyTuple {
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
