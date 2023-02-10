@@ -9,6 +9,6 @@ fsspec, but
 
 Latest results from examples/script.py:
 ```commandline
-Rust: 0.129
-asyncio: 0.2486
+Rust: 0.097
+asyncio: 0.1349
 ```
