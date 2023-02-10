@@ -8,7 +8,8 @@ use std::str::FromStr;
 use tokio::runtime::{Builder, Runtime};
 
 thread_local! {
-    static RUNTIME: Runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    static RUNTIME: Runtime = Builder::new_current_thread().worker_threads(1)
+        .max_blocking_threads(1).enable_all().build().unwrap();
     static CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
