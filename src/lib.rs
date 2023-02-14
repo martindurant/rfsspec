@@ -101,7 +101,7 @@ fn get_ranges<'a>(
             _ => 0,
         }
     };
-    RUNTIME.with(|rt| rt.block_on(coroutine));
+    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
