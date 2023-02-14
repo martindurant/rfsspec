@@ -23,7 +23,7 @@ jobs:
       - name: Setup conda
         uses: mamba-org/provision-with-micromamba@main
         with:
-          environment-file: ci/environment-py38.yml
+          environment-file: ../ci/environment-py38.yml
           extra-specs: python=${{ matrix.PY }}
       - uses: PyO3/maturin-action@v1
         with:
