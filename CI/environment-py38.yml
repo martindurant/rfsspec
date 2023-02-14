@@ -8,3 +8,5 @@ dependencies:
   - pytest
   - requests
   - openssl
+  - maturin
+  - rust
