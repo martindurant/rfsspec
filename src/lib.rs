@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::future::join_all;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
@@ -8,17 +9,31 @@ use std::str::FromStr;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
-thread_local! {
-    static RUNTIME: Runtime = Builder::new_current_thread().worker_threads(1)
-        .max_blocking_threads(1).enable_all().build().unwrap();
-    static CLIENT: reqwest::Client = reqwest::Client::new();
+static RUNTIME: Mutex<Option<Runtime>> = Mutex::new(None);
+static CLIENT: Mutex<Option<reqwest::Client>> = Mutex::new(None);
+
+fn ensure_client() {
+    if CLIENT.lock().is_none() {
+        *CLIENT.lock() = Some(reqwest::Client::new());
+    }
+}
+fn ensure_runtime() {
+    if RUNTIME.lock().is_none() {
+        let runtime = Builder::new_current_thread()
+            .worker_threads(1)
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        *RUNTIME.lock() = Some(runtime);
+    }
 }
 
 async fn get_file(
     url: &str, lpath: &str, method: &reqwest::Method,
     head: &HashMap<&str, String>,
 ) -> reqwest::Result<()> {
-    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
+    let mut req = CLIENT.lock().as_ref().unwrap().request(method.into(), url);
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -44,6 +59,8 @@ fn get<'a>(
     py: Python<'a>, urls: Vec<&str>, lpaths: Vec<&str>,
     headers: Option<HashMap<&str, String>>, method: Option<&str>,
 ) -> () {
+    ensure_client();
+    ensure_runtime();
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
     let method = reqwest::Method::from_str(method).unwrap();
@@ -57,14 +74,14 @@ fn get<'a>(
         .iter()
         .count()
     };
-    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
+    py.allow_threads(|| RUNTIME.lock().as_ref().unwrap().block_on(coroutine));
 }
 
 async fn get_url(
     url: &str, method: &reqwest::Method, head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
-    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
+    let mut req = CLIENT.lock().as_ref().unwrap().request(method.into(), url);
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -117,6 +134,8 @@ fn cat_ranges<'a>(
     ends: Option<Vec<usize>>, headers: Option<HashMap<&str, String>>,
     method: Option<&str>,
 ) -> &'a PyTuple {
+    ensure_client();
+    ensure_runtime();
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
@@ -149,7 +168,7 @@ fn cat_ranges<'a>(
             _ => 0,
         }
     };
-    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
+    py.allow_threads(|| RUNTIME.lock().as_ref().unwrap().block_on(coroutine));
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
