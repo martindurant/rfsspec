@@ -59,8 +59,6 @@ fn get<'a>(
     py: Python<'a>, urls: Vec<&str>, lpaths: Vec<&str>,
     headers: Option<HashMap<&str, String>>, method: Option<&str>,
 ) -> () {
-    ensure_client();
-    ensure_runtime();
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
     let method = reqwest::Method::from_str(method).unwrap();
@@ -134,8 +132,6 @@ fn cat_ranges<'a>(
     ends: Option<Vec<usize>>, headers: Option<HashMap<&str, String>>,
     method: Option<&str>,
 ) -> &'a PyTuple {
-    ensure_client();
-    ensure_runtime();
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
@@ -176,5 +172,7 @@ fn cat_ranges<'a>(
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(get, m)?)?;
+    ensure_client();
+    ensure_runtime();
     Ok(())
 }
