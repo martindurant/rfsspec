@@ -139,7 +139,6 @@ fn cat_ranges<'a>(
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
-    println!("{}", method);
     let method = reqwest::Method::from_str(method).unwrap();
     let coroutine = async {
         match (starts, ends) {
