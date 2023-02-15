@@ -37,8 +37,7 @@ jobs:
         run: |
           RUST_BACKTRACE=full pytest -v -s
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
-        with:
-          name: wheels
-          path: dist
-
+        shell: bash -l {0}
+        run: |
+          anaconda login --username mdurant --password ${{ secrets.ANACONDA_PASSWORD }}
+          anaconda upload dist/*

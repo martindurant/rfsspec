@@ -11,7 +11,9 @@ def test_instance():
 def test_cat_one(server):
     fs = rfsspec.RustyHTTPFileSystem()
     url = server + "/index/realfile"
-    assert fs.cat(url) == data
+    out = fs.cat(url)
+    assert len(out) == len(data)
+    assert out == data
 
 
 def test_method_header(server):
@@ -26,4 +28,6 @@ def test_get_one(server, tmpdir):
     lpath = f"{tmpdir}/afile"
     fs.get(url, lpath)
     with open(lpath, "rb") as f:
-        assert f.read() == data
+        out = f.read()
+    assert len(out) == len(data)
+    assert out == data

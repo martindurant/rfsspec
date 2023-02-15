@@ -10,3 +10,4 @@ dependencies:
   - openssl
   - maturin
   - rust
+  - anaconda-client

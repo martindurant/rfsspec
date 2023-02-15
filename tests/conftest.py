@@ -132,10 +132,13 @@ def serve():
     th.start()
     try:
         yield "http://127.0.0.1:%i" % port
+    except:
+        pass
     finally:
         httpd.socket.close()
         httpd.shutdown()
         th.join()
+    print("server done")
 
 
 @pytest.fixture(scope="module")

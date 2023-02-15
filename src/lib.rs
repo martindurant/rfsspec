@@ -27,6 +27,7 @@ async fn get_file(
     while let Some(chunk) = resp.chunk().await? {
         out.write(chunk.as_ref()).await.unwrap();
     }
+    out.flush().await.unwrap();
     Ok(())
 }
 
