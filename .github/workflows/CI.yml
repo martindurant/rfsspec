@@ -27,15 +27,15 @@ jobs:
       - name: build
         shell: bash -l {0}
         run: |
-          maturin build --release -o dist
+          maturin build --release --strip -o dist
       - name: pip-install
         shell: bash -l {0}
         run: |
-          pip install dist/* --no-deps
+          pip install dist/* --no-deps --force-reinstall
       - name: test
         shell: bash -l {0}
         run: |
-          pytest -v
+          RUST_BACKTRACE=1 pytest -v
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:

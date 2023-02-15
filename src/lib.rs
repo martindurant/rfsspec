@@ -25,7 +25,6 @@ async fn get_file(
     let mut resp = req.send().await?;
     let mut out = tokio::fs::File::create(lpath).await.unwrap();
     while let Some(chunk) = resp.chunk().await? {
-        println!("Chunk: {:?}", chunk);
         out.write(chunk.as_ref()).await.unwrap();
     }
     Ok(())
