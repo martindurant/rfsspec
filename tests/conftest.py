@@ -91,6 +91,9 @@ class HTTPTestHandler(BaseHTTPRequestHandler):
             yield self.rfile.read(length)
             self.rfile.readline()
 
+    def do_PATCH(self):
+        self._respond(200, {}, f"{self.headers}".encode())
+
     def do_HEAD(self):
         if "head_not_auth" in self.headers:
             return self._respond(

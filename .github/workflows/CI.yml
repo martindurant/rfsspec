@@ -16,7 +16,7 @@ jobs:
         PY: ["3.8", "3.9", "3.10", "3.11"]
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Setup conda
@@ -24,7 +24,7 @@ jobs:
         with:
           environment-file: ./CI/environment-py38.yml
           extra-specs: python=${{ matrix.PY }}
-      - name: pip-install
+      - name: build
         shell: bash -l {0}
         run: |
           maturin build --release -o dist

@@ -4,7 +4,7 @@ import logging
 import re
 from copy import copy
 
-from rfsspec.rfsspec import get_ranges
+from rfsspec.rfsspec import cat_ranges, get
 
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import DEFAULT_BLOCK_SIZE
@@ -16,8 +16,9 @@ logger = logging.getLogger("fsspec.http")
 
 
 def get_one(url, start=None, end=None, headers=None, method="GET"):
-    return get_ranges(
-        [url], [start] if start else None, [end] if end else None
+    return cat_ranges(
+        [url], [start] if start else None, [end] if end else None,
+        headers=headers, method=method
     )[0]
 
 
@@ -106,7 +107,7 @@ class RustyHTTPFileSystem(AbstractFileSystem):
         return ""
 
     def cat_file(self, url, start=None, end=None, **kwargs):
-        return get_one(url, start, end)
+        return get_one(url, start, end, **kwargs)
 
     def cat(self, path, recursive=False, on_error="raise", **kwargs):
         paths = [path] if isinstance(path, str) else path
@@ -115,10 +116,14 @@ class RustyHTTPFileSystem(AbstractFileSystem):
             or isinstance(path, list)
             or paths[0] != self._strip_protocol(path)
         ):
-            out = {p: _ for p, _ in zip(paths, get_ranges(paths))}
+            out = {p: _ for p, _ in zip(paths, cat_ranges(paths, **kwargs))}
             return out
         else:
             return self.cat_file(paths[0], **kwargs)
 
     def cat_ranges(self, urls, starts, ends, **kwargs):
-        return get_ranges(urls, starts, ends)
+        return cat_ranges(urls, starts, ends, **kwargs)
+
+    def get(self, rpath, lpath, **kwargs):
+        get([rpath], [lpath], **kwargs)
+

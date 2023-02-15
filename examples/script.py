@@ -14,6 +14,7 @@ N = 100
 
 
 fs = rfsspec.RustyHTTPFileSystem()
+fs.cat_ranges([u] * 100, starts, ends)  # warm up
 t0 = time.time()
 for _ in range(N):
     fs.cat_ranges([u] * 100, starts, ends)
@@ -21,6 +22,7 @@ print("Rust:", np.round((time.time() - t0) / N, 4))
 
 
 fs = fsspec.filesystem("http")
+fs.cat_ranges([u] * 100, starts, ends)  # warm up
 t0 = time.time()
 for _ in range(N):
     fs.cat_ranges([u] * 100, starts, ends)

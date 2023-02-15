@@ -5,12 +5,59 @@ use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
+use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
 thread_local! {
     static RUNTIME: Runtime = Builder::new_current_thread().worker_threads(1)
         .max_blocking_threads(1).enable_all().build().unwrap();
     static CLIENT: reqwest::Client = reqwest::Client::new();
+}
+
+async fn get_file(
+    url: &str, lpath: &str, method: &reqwest::Method,
+    head: &HashMap<&str, String>,
+) -> reqwest::Result<()> {
+    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
+    for (key, value) in head.iter() {
+        req = req.header(*key, value);
+    }
+    let mut resp = req.send().await?;
+    let mut out = tokio::fs::File::create(lpath).await.unwrap();
+    while let Some(chunk) = resp.chunk().await? {
+        println!("Chunk: {:?}", chunk);
+        out.write(chunk.as_ref()).await.unwrap();
+    }
+    Ok(())
+}
+
+/// get(urls, lpaths, headers=None, method=None)
+/// --
+///
+/// urls: list[str]
+/// lpaths: list[str]
+/// headers: dict[str, str]
+/// method: str | None
+#[pyfunction]
+#[pyo3(text_signature = "(urls, lpaths, /, headers=None, method=None)")]
+fn get<'a>(
+    py: Python<'a>, urls: Vec<&str>, lpaths: Vec<&str>,
+    headers: Option<HashMap<&str, String>>, method: Option<&str>,
+) -> () {
+    let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
+    let method = method.unwrap_or("GET");
+    let method = reqwest::Method::from_str(method).unwrap();
+    let coroutine = async {
+        join_all(
+            urls.iter()
+                .zip(lpaths)
+                .map(|(u, s)| get_file(u, s, &method, &headers)),
+        )
+        .await
+        .iter()
+        .count()
+    };
+    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
 }
 
 async fn get_url(
@@ -53,7 +100,7 @@ async fn get_url_or(
     out.err().unwrap().to_string().into()
 }
 
-/// get_ranges(urls, starts=None, ends=None, headers=None, method=None)
+/// cat_ranges(urls, starts=None, ends=None, headers=None, method=None)
 /// --
 ///
 /// urls: list[str]
@@ -65,7 +112,7 @@ async fn get_url_or(
 #[pyo3(
     text_signature = "(urls, /, starts=None, ends=None, headers=None, method=None)"
 )]
-fn get_ranges<'a>(
+fn cat_ranges<'a>(
     py: Python<'a>, urls: Vec<&str>, starts: Option<Vec<usize>>,
     ends: Option<Vec<usize>>, headers: Option<HashMap<&str, String>>,
     method: Option<&str>,
@@ -73,6 +120,7 @@ fn get_ranges<'a>(
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
+    println!("{}", method);
     let method = reqwest::Method::from_str(method).unwrap();
     let coroutine = async {
         match (starts, ends) {
@@ -108,6 +156,7 @@ fn get_ranges<'a>(
 /// A Python module implemented in Rust.
 #[pymodule]
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_ranges, m)?)?;
+    m.add_function(wrap_pyfunction!(cat_ranges, m)?)?;
+    m.add_function(wrap_pyfunction!(get, m)?)?;
     Ok(())
 }
