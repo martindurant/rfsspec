@@ -35,7 +35,7 @@ jobs:
       - name: test
         shell: bash -l {0}
         run: |
-          RUST_BACKTRACE=1 pytest -v
+          RUST_BACKTRACE=1 pytest -v -s
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:
