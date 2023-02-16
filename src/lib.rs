@@ -18,7 +18,10 @@ async fn get_file(
     url: &str, lpath: &str, method: &reqwest::Method,
     head: &HashMap<&str, String>,
 ) -> reqwest::Result<()> {
-    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
+    let mut req = match CLIENT.try_with(|cl| cl.request(method.into(), url)) {
+        Ok(r) => r,
+        _ => return Ok(()),
+    };
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
