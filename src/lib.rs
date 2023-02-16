@@ -5,7 +5,6 @@ use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
@@ -67,7 +66,10 @@ async fn get_url(
     url: &str, method: &reqwest::Method, head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
-    let mut req = CLIENT.with(|cl| cl.request(method.into(), url));
+    let mut req = match CLIENT.try_with(|cl| cl.request(method.into(), url)) {
+        Ok(r) => r,
+        _ => return Ok(Bytes::new()),
+    };
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
