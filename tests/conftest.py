@@ -138,7 +138,6 @@ def serve():
         httpd.socket.close()
         httpd.shutdown()
         th.join()
-    print("server done")
 
 
 @pytest.fixture(scope="module")

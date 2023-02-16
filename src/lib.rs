@@ -1,5 +1,7 @@
 use bytes::Bytes;
 use futures::future::join_all;
+#[macro_use]
+extern crate lazy_static;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
@@ -8,20 +10,20 @@ use std::str::FromStr;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
-thread_local! {
-    static RUNTIME: Runtime = Builder::new_current_thread().worker_threads(1)
-        .max_blocking_threads(1).enable_all().build().unwrap();
-    static CLIENT: reqwest::Client = reqwest::Client::new();
+lazy_static! {
+    static ref RUNTIME: Runtime = Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
 async fn get_file(
     url: &str, lpath: &str, method: &reqwest::Method,
     head: &HashMap<&str, String>,
 ) -> reqwest::Result<()> {
-    let mut req = match CLIENT.try_with(|cl| cl.request(method.into(), url)) {
-        Ok(r) => r,
-        _ => return Ok(()),
-    };
+    let mut req = CLIENT.request(method.into(), url);
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -60,19 +62,14 @@ fn get<'a>(
         .iter()
         .count()
     };
-    py.allow_threads(|| {
-        RUNTIME.try_with(|rt| rt.block_on(coroutine)).unwrap_or(0)
-    });
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
 }
 
 async fn get_url(
     url: &str, method: &reqwest::Method, head: &HashMap<&str, String>,
     body: Option<&str>,
 ) -> reqwest::Result<Bytes> {
-    let mut req = match CLIENT.try_with(|cl| cl.request(method.into(), url)) {
-        Ok(r) => r,
-        _ => return Ok(Bytes::new()),
-    };
+    let mut req = CLIENT.request(method.into(), url);
     for (key, value) in head.iter() {
         req = req.header(*key, value);
     }
@@ -156,9 +153,7 @@ fn cat_ranges<'a>(
             _ => 0,
         }
     };
-    py.allow_threads(|| {
-        RUNTIME.try_with(|rt| rt.block_on(coroutine)).unwrap_or(0)
-    });
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
