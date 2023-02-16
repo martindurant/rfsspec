@@ -5,6 +5,7 @@ use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
@@ -57,7 +58,9 @@ fn get<'a>(
         .iter()
         .count()
     };
-    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
+    py.allow_threads(|| {
+        RUNTIME.try_with(|rt| rt.block_on(coroutine)).unwrap_or(0)
+    });
 }
 
 async fn get_url(
@@ -83,7 +86,7 @@ async fn get_url_or(
     if (start > 0) & (end != 0) {
         headers.insert(
             "Range".as_ref(),
-            format!("bytes={}-{}", start, end + 1).to_string(),
+            format!("bytes={}-{}", start, end - 1).to_string(),
         );
     }
 
@@ -120,7 +123,6 @@ fn cat_ranges<'a>(
     let mut result: Vec<Bytes> = Vec::with_capacity(urls.len());
     let headers: HashMap<&str, String> = headers.unwrap_or(HashMap::new());
     let method = method.unwrap_or("GET");
-    println!("{}", method);
     let method = reqwest::Method::from_str(method).unwrap();
     let coroutine = async {
         match (starts, ends) {
@@ -149,7 +151,9 @@ fn cat_ranges<'a>(
             _ => 0,
         }
     };
-    py.allow_threads(|| RUNTIME.with(|rt| rt.block_on(coroutine)));
+    py.allow_threads(|| {
+        RUNTIME.try_with(|rt| rt.block_on(coroutine)).unwrap_or(0)
+    });
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
