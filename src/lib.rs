@@ -162,6 +162,7 @@ fn cat_ranges<'a>(
 
 use aws_config::profile::ProfileFileCredentialsProvider;
 use aws_sdk_s3::{Client, Region};
+use aws_smithy_http::result::SdkError;
 
 async fn s3(
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
@@ -220,6 +221,14 @@ fn s3_1<'py>(
                     Ok(r) => {
                         let b = r.body.collect().await.unwrap().into_bytes();
                         result.extend(b.to_vec());
+                    }
+                    Err(SdkError::ResponseError(e)) => {
+                        result.extend(b"S3 ERRROR: ");
+                        result.extend(e.raw().http().body().bytes().unwrap())
+                    }
+                    Err(SdkError::ServiceError(e)) => {
+                        result.extend(b"S3 ERRROR: ");
+                        result.extend(e.raw().http().body().bytes().unwrap())
                     }
                     Err(e) => {
                         result.extend(format!("S3 ERRROR: {}", e).as_bytes())
