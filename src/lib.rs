@@ -7,6 +7,7 @@ use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Mutex;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
 
@@ -17,6 +18,8 @@ lazy_static! {
         .build()
         .unwrap();
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
+    static ref S3_CACHE: Mutex<HashMap<String, Client>> =
+        Mutex::new(HashMap::new());
 }
 
 async fn get_file(
@@ -157,10 +160,83 @@ fn cat_ranges<'a>(
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
+use aws_config::profile::ProfileFileCredentialsProvider;
+use aws_sdk_s3::{Client, Region};
+
+async fn s3(
+    region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
+) -> Client {
+    let cname: String = vec![
+        region.unwrap_or("None"),
+        profile.unwrap_or("None"),
+        endpoint_url.unwrap_or("None"),
+    ]
+    .join("-");
+    if S3_CACHE.lock().unwrap().contains_key(cname.as_str()) {
+        // clone is free since "client" is actually an Arc pointing to real object
+        return S3_CACHE.lock().unwrap().get(cname.as_str()).unwrap().clone();
+    }
+    let mut shared_config = match profile {
+        None => aws_config::from_env(),
+        Some(pro) => aws_config::from_env().credentials_provider(
+            ProfileFileCredentialsProvider::builder()
+                .profile_name(pro)
+                .build(),
+        ),
+    };
+    if let Some(reg) = region {
+        shared_config = shared_config.region(Region::new(String::from(reg)))
+    };
+    if let Some(end) = endpoint_url {
+        shared_config = shared_config.endpoint_url(end)
+    };
+    let shared_config = shared_config.load().await;
+    let client = Client::new(&shared_config);
+    S3_CACHE.lock().unwrap().insert(cname, client.clone());
+    client
+}
+
+#[pyfunction]
+fn s3_1<'py>(
+    py: Python<'py>, path: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>, start: Option<usize>, end: Option<usize>,
+) -> &'py PyBytes {
+    let out = path.split_once("/");
+    let mut result: Vec<u8> = Vec::new();
+    match out {
+        None => result.extend("S3 ERROR: bad path".bytes()),
+        Some((bucket, key)) => {
+            let coroutine = async {
+                let s3_client = s3(region, profile, endpoint_url).await;
+                let mut resp = s3_client.get_object().bucket(bucket).key(key);
+                if let (Some(st), Some(e)) = (start, end) {
+                    resp =
+                        resp.set_range(Some(format!("bytes={}-{}", st, e - 1)))
+                };
+                let resp = resp.send().await;
+                match resp {
+                    // Convert the body into a string
+                    //let data = object.body.collect().await.unwrap().into_bytes();
+                    Ok(r) => {
+                        let b = r.body.collect().await.unwrap().into_bytes();
+                        result.extend(b.to_vec());
+                    }
+                    Err(e) => {
+                        result.extend(format!("S3 ERRROR: {}", e).as_bytes())
+                    }
+                }
+            };
+            py.allow_threads(|| RUNTIME.block_on(coroutine))
+        }
+    };
+    PyBytes::new(py, &result[..])
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(get, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_1, m)?)?;
     Ok(())
 }
