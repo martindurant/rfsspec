@@ -161,6 +161,7 @@ fn cat_ranges<'a>(
 }
 
 use aws_config::profile::ProfileFileCredentialsProvider;
+use aws_sdk_s3::model::RequestPayer;
 use aws_sdk_s3::{Client, Region};
 use aws_smithy_http::result::SdkError;
 
@@ -197,48 +198,69 @@ async fn s3(
     client
 }
 
-#[pyfunction]
-fn s3_1<'py>(
-    py: Python<'py>, path: &str, region: Option<&str>, profile: Option<&str>,
-    endpoint_url: Option<&str>, start: Option<usize>, end: Option<usize>,
-) -> &'py PyBytes {
-    let out = path.split_once("/");
-    let mut result: Vec<u8> = Vec::new();
+async fn s3_get_one_range(
+    url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
+) -> Vec<u8> {
+    let out = url.split_once("/");
     match out {
-        None => result.extend("S3 ERROR: bad path".bytes()),
+        None => b"S3 ERROR: bad path".to_vec(),
         Some((bucket, key)) => {
-            let coroutine = async {
-                let s3_client = s3(region, profile, endpoint_url).await;
-                let mut resp = s3_client.get_object().bucket(bucket).key(key);
-                if let (Some(st), Some(e)) = (start, end) {
-                    resp =
-                        resp.set_range(Some(format!("bytes={}-{}", st, e - 1)))
-                };
-                let resp = resp.send().await;
-                match resp {
-                    // Convert the body into a string
-                    //let data = object.body.collect().await.unwrap().into_bytes();
-                    Ok(r) => {
-                        let b = r.body.collect().await.unwrap().into_bytes();
-                        result.extend(b.to_vec());
-                    }
-                    Err(SdkError::ResponseError(e)) => {
-                        result.extend(b"S3 ERRROR: ");
-                        result.extend(e.raw().http().body().bytes().unwrap())
-                    }
-                    Err(SdkError::ServiceError(e)) => {
-                        result.extend(b"S3 ERRROR: ");
-                        result.extend(e.raw().http().body().bytes().unwrap())
-                    }
-                    Err(e) => {
-                        result.extend(format!("S3 ERRROR: {}", e).as_bytes())
-                    }
-                }
+            let mut result: Vec<u8> = Vec::new();
+            let mut resp = s3.get_object().bucket(bucket).key(key);
+            if (start > 0) & (end > 0) {
+                resp = resp.set_range(Some(format!(
+                    "bytes={}-{}",
+                    start,
+                    end - 1
+                )))
             };
-            py.allow_threads(|| RUNTIME.block_on(coroutine))
+            if requester_pays {
+                resp = resp.set_request_payer(Some(RequestPayer::Requester));
+            }
+            let resp = resp.send().await;
+            match resp {
+                // Convert the body into a string
+                //let data = object.body.collect().await.unwrap().into_bytes();
+                Ok(r) => {
+                    let b = r.body.collect().await.unwrap().into_bytes();
+                    result.extend(b.to_vec());
+                }
+                Err(SdkError::ResponseError(e)) => {
+                    result.extend(b"S3 ERRROR: ");
+                    result.extend(e.raw().http().body().bytes().unwrap())
+                }
+                Err(SdkError::ServiceError(e)) => {
+                    result.extend(b"S3 ERRROR: ");
+                    result.extend(e.raw().http().body().bytes().unwrap())
+                }
+                Err(e) => {
+                    result.extend(format!("S3 ERRROR: {}", e).as_bytes())
+                }
+            }
+            result
         }
+    }
+}
+
+#[pyfunction]
+fn s3_cat_ranges<'py>(
+    py: Python<'py>, path: Vec<&str>, region: Option<&str>,
+    profile: Option<&str>, endpoint_url: Option<&str>, start: Vec<usize>,
+    end: Vec<usize>, requester_pays: bool,
+) -> &'py PyTuple {
+    let mut result: Vec<Vec<u8>> = Vec::with_capacity(path.len());
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        join_all(path.iter().zip(start).zip(end).map(|((u, st), e)| {
+            s3_get_one_range(u, s3_client.clone(), st, e, requester_pays)
+        }))
+        .await
+        .into_iter()
+        .map(|out: Vec<u8>| result.push(out))
+        .count()
     };
-    PyBytes::new(py, &result[..])
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
 /// A Python module implemented in Rust.
@@ -246,6 +268,6 @@ fn s3_1<'py>(
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(get, m)?)?;
-    m.add_function(wrap_pyfunction!(s3_1, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_cat_ranges, m)?)?;
     Ok(())
 }
