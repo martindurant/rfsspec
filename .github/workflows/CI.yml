@@ -60,4 +60,4 @@ jobs:
         shell: bash -l {0}
         run: |
           anaconda login --username mdurant --password ${{ secrets.ANACONDA_PASSWORD }}
-          anaconda upload dist/* --force
+          anaconda upload *.whl --force
