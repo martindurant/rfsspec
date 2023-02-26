@@ -9,6 +9,8 @@ fsspec, but
 
 Latest results from examples/script.py:
 ```commandline
-Rust: 0.097
-asyncio: 0.1349
+Rust http: 0.0932
+Rust s3: 0.1017
+fsspec http: 0.0978
+fsspec s3: 0.224
 ```

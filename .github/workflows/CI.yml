@@ -50,6 +50,10 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           name: wheels
+      - name: Setup conda
+        uses: mamba-org/provision-with-micromamba@main
+        with:
+          environment-file: ./CI/environment-upload.yml
       - name: Upload wheels
         shell: bash -l {0}
         run: |
