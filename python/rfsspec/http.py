@@ -128,8 +128,9 @@ class RustyHTTPFileSystem(AbstractFileSystem):
     def get_file(self, rpath, lpath, **kwargs):
         get([rpath], [lpath], **kwargs)
 
-    def get(self, rpath, lpath, **Kwargs):
+    def get(self, rpath, lpath, **kwargs):
         if not isinstance(rpath, (list, tuple)):
-            raise NotImplementedError
+            rpath = [rpath]
+            lpath = [lpath]
         lpath = fsspec.utils.other_paths(rpath, lpath)
         get(rpath, lpath, **kwargs)
