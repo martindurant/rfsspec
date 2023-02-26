@@ -4,6 +4,7 @@ import logging
 import re
 from copy import copy
 
+import fsspec.utils
 from rfsspec.rfsspec import cat_ranges, get
 
 from fsspec.spec import AbstractFileSystem
@@ -124,6 +125,11 @@ class RustyHTTPFileSystem(AbstractFileSystem):
     def cat_ranges(self, urls, starts, ends, **kwargs):
         return cat_ranges(urls, starts, ends, **kwargs)
 
-    def get(self, rpath, lpath, **kwargs):
+    def get_file(self, rpath, lpath, **kwargs):
         get([rpath], [lpath], **kwargs)
 
+    def get(self, rpath, lpath, **Kwargs):
+        if not isinstance(rpath, (list, tuple)):
+            raise NotImplementedError
+        lpath = fsspec.utils.other_paths(rpath, lpath)
+        get(rpath, lpath, **kwargs)
