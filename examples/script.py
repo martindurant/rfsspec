@@ -29,6 +29,13 @@ for _ in range(R):
     fs.cat_ranges([u2] * N, starts, ends)
 print("Rust s3:", np.round((time.time() - t0) / R, 4))
 
+fs = rfsspec.RustyS3FileSystem(anon=True)
+fs.cat_ranges([u2] * N, starts, ends)  # warm up
+t0 = time.time()
+for _ in range(R):
+    fs.cat_ranges([u2] * N, starts, ends)
+print("Rust anon s3:", np.round((time.time() - t0) / R, 4))
+
 fs = fsspec.filesystem("http")
 fs.cat_ranges([u] * N, starts, ends)  # warm up
 t0 = time.time()
@@ -42,3 +49,10 @@ t0 = time.time()
 for _ in range(R):
     fs.cat_ranges([u2] * N, starts, ends)
 print("fsspec s3:", np.round((time.time() - t0) / R, 4))
+
+fs = fsspec.filesystem("s3", anon=True)
+fs.cat_ranges([u2] * N, starts, ends)  # warm up
+t0 = time.time()
+for _ in range(R):
+    fs.cat_ranges([u2] * N, starts, ends)
+print("fsspec anon s3:", np.round((time.time() - t0) / R, 4))
