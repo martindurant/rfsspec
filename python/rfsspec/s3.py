@@ -16,20 +16,19 @@ class RustyS3FileSystem(AbstractFileSystem):
 
     """
 
-    sep = "/"
-
     def __init__(
             self,
             profile=None,
             endpoint_url=None,
             requester_pays=False,
             region="us-east-1",
+            anon=False,
             **storage_options,
     ):
         """
         """
         self.kwargs = dict(profile=profile, endpoint_url=endpoint_url, requester_pays=requester_pays,
-                           region=region)
+                           region=region, anon=anon)
         super().__init__(self, **storage_options)
 
     def cat_file(self, url, start=None, end=None, **kwargs):

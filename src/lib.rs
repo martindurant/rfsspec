@@ -198,8 +198,26 @@ async fn s3(
     client
 }
 
+fn make_unsigned<O, Retry>(
+    mut operation: aws_smithy_http::operation::Operation<O, Retry>,
+) -> Result<
+    aws_smithy_http::operation::Operation<O, Retry>,
+    std::convert::Infallible,
+> {
+    {
+        let mut props = operation.properties_mut();
+        let mut signing_config = props
+            .get_mut::<aws_sig_auth::signer::OperationSigningConfig>()
+            .expect("has signing_config");
+        signing_config.signing_requirements =
+            aws_sig_auth::signer::SigningRequirements::Disabled;
+    }
+    Ok(operation)
+}
+
 async fn s3_get_one_range(
     url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
+    anon: bool,
 ) -> Vec<u8> {
     let out = url.split_once("/");
     match out {
@@ -207,7 +225,7 @@ async fn s3_get_one_range(
         Some((bucket, key)) => {
             let mut result: Vec<u8> = Vec::new();
             let mut resp = s3.get_object().bucket(bucket).key(key);
-            if (start > 0) & (end > 0) {
+            if (start > 0) | (end > 0) {
                 resp = resp.set_range(Some(format!(
                     "bytes={}-{}",
                     start,
@@ -217,7 +235,17 @@ async fn s3_get_one_range(
             if requester_pays {
                 resp = resp.set_request_payer(Some(RequestPayer::Requester));
             }
-            let resp = resp.send().await;
+            let resp = if anon {
+                resp.customize()
+                    .await
+                    .unwrap()
+                    .map_operation(make_unsigned)
+                    .unwrap()
+                    .send()
+                    .await
+            } else {
+                resp.send().await
+            };
             match resp {
                 // Convert the body into a string
                 //let data = object.body.collect().await.unwrap().into_bytes();
@@ -246,13 +274,13 @@ async fn s3_get_one_range(
 fn s3_cat_ranges<'py>(
     py: Python<'py>, path: Vec<&str>, region: Option<&str>,
     profile: Option<&str>, endpoint_url: Option<&str>, start: Vec<usize>,
-    end: Vec<usize>, requester_pays: bool,
+    end: Vec<usize>, requester_pays: bool, anon: bool,
 ) -> &'py PyTuple {
     let mut result: Vec<Vec<u8>> = Vec::with_capacity(path.len());
     let coroutine = async {
         let s3_client = s3(region, profile, endpoint_url).await;
         join_all(path.iter().zip(start).zip(end).map(|((u, st), e)| {
-            s3_get_one_range(u, s3_client.clone(), st, e, requester_pays)
+            s3_get_one_range(u, s3_client.clone(), st, e, requester_pays, anon)
         }))
         .await
         .into_iter()
