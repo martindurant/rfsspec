@@ -20,6 +20,7 @@ aws-config = { version = "0.54.1", features = ["rt-tokio"] }
 tokio-stream = "0.1.12"
 aws-smithy-http = "0.54.3"
 aws-sig-auth = "0.54.1"
+google_auth = "0.2.1"
 
 [profile.release]
 opt-level = 3

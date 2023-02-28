@@ -2,6 +2,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 #[macro_use]
 extern crate lazy_static;
+use google_auth::TokenManager;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use reqwest;
@@ -19,6 +20,8 @@ lazy_static! {
         .unwrap();
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
     static ref S3_CACHE: Mutex<HashMap<String, Client>> =
+        Mutex::new(HashMap::new());
+    static ref GCS_TOKEN: Mutex<HashMap<String, TokenManager>> =
         Mutex::new(HashMap::new());
 }
 
@@ -88,7 +91,7 @@ async fn get_url_or(
     url: &str, start: usize, end: usize, mut headers: HashMap<&str, String>,
     method: &reqwest::Method,
 ) -> Bytes {
-    if (start > 0) & (end != 0) {
+    if (start > 0) | (end != 0) {
         headers.insert(
             "Range".as_ref(),
             format!("bytes={}-{}", start, end - 1).to_string(),
@@ -105,7 +108,7 @@ async fn get_url_or(
     if let Ok(content) = out {
         return content;
     }
-    out.err().unwrap().to_string().into()
+    Bytes::from(format!("HTTP ERROR: {}", out.err().unwrap().to_string()))
 }
 
 /// cat_ranges(urls, starts=None, ends=None, headers=None, method=None)
@@ -291,11 +294,69 @@ fn s3_cat_ranges<'py>(
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
+async fn gcs() -> TokenManager {
+    let cname: &str = "full-control";
+    if GCS_TOKEN.lock().unwrap().contains_key(cname) {
+        // clone is free since "client" is actually an Arc pointing to real object
+        return GCS_TOKEN.lock().unwrap().get(cname).unwrap().clone();
+    }
+    let tok = TokenManager::new(&[cname]).await.unwrap();
+    GCS_TOKEN.lock().unwrap().insert(cname.to_string(), tok.clone());
+    println!("token: {}", tok.clone().token().await.unwrap());
+    tok
+}
+
+async fn gcs_get_range(
+    path: &str, tok: Option<String>, start: usize, end: usize,
+    project: Option<&str>,
+) -> Bytes {
+    let mut head: HashMap<&str, String> = HashMap::new();
+    if let Some(tok_str) = tok {
+        head.insert("authorization", tok_str);
+        if let Some(proj) = project {
+            head.insert("x-goog-user-project", proj.to_string());
+        };
+    }
+    let (bucket, key) = path.split_once("/").unwrap();
+    // or STORAGE_EMULATOR_HOST env var for testing
+    let host = "https://storage.googleapis.com";
+    let url = format!(
+        "{}/download/storage/v1/b/{}/o/{}?alt=media",
+        host, bucket, key
+    );
+    get_url_or(&url[..], start, end, head, &reqwest::Method::GET).await
+}
+
+#[pyfunction]
+fn gcs_cat_ranges<'py>(
+    py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
+    anon: bool, project: Option<&str>,
+) -> &'py PyTuple {
+    let mut result: Vec<Bytes> = Vec::with_capacity(path.len());
+    let coroutine =
+        async {
+            let tok: Option<String> = match anon {
+                true => None,
+                false => Some(gcs().await.token().await.unwrap()),
+            };
+            join_all(path.iter().zip(start).zip(end).map(|((u, st), e)| {
+                gcs_get_range(u, tok.clone(), st, e, project)
+            }))
+            .await
+            .into_iter()
+            .map(|out: Bytes| result.push(out))
+            .count()
+        };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(get, m)?)?;
     m.add_function(wrap_pyfunction!(s3_cat_ranges, m)?)?;
+    m.add_function(wrap_pyfunction!(gcs_cat_ranges, m)?)?;
     Ok(())
 }

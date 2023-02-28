@@ -1,7 +1,7 @@
 # rfsspec
 Rust python FSs
 
-Implements s3 and HTTP backends for fsspec using Rust.
+Implements s3, gcs and HTTP backends for fsspec using Rust.
 
 Respects concurrency of many simultaneous requests as made by
 fsspec, but 
@@ -13,7 +13,7 @@ fsspec, but
 #### Limitations
 
 Currently only the methods `cat_ranges`, `cat` and `cat_file` are supported, enough
-to open a (zonsolidated) zarr dataset for reading.
+to open a (consolidated) zarr dataset for reading.
 
 #### Implementations
 
@@ -29,6 +29,11 @@ and options
 - anon
 - region
 - ranges
+
+The GCS backend supports:
+- anon
+- ranges
+- assumes credentials via env variables and gcloud CLI
 
 ### Installation
 
