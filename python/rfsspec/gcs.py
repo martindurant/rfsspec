@@ -13,11 +13,15 @@ class RustyGCSFileSystem(AbstractFileSystem):
     def __init__(
             self,
             anon=False,
+            project=None,
+            requester_pays=False,
             **storage_options,
     ):
         """
         """
-        self.kwargs = dict(anon=anon)
+        if requester_pays and project is None:
+            raise ValueError("If using requester-pays, please specify `project=`")
+        self.kwargs = dict(anon=anon, project=project, requester_pays=requester_pays)
         super().__init__(self, **storage_options)
 
     def cat_file(self, url, start=None, end=None, **kwargs):

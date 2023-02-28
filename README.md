@@ -29,10 +29,12 @@ and options
 - anon
 - region
 - ranges
+- requester-pays
 
 The GCS backend supports:
 - anon
 - ranges
+- requester-pays
 - assumes credentials via env variables and gcloud CLI
 
 ### Installation

@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::{Builder, Runtime};
+use urlencoding::encode;
 
 lazy_static! {
     static ref RUNTIME: Runtime = Builder::new_current_thread()
@@ -302,27 +303,33 @@ async fn gcs() -> TokenManager {
     }
     let tok = TokenManager::new(&[cname]).await.unwrap();
     GCS_TOKEN.lock().unwrap().insert(cname.to_string(), tok.clone());
-    println!("token: {}", tok.clone().token().await.unwrap());
     tok
 }
 
 async fn gcs_get_range(
     path: &str, tok: Option<String>, start: usize, end: usize,
-    project: Option<&str>,
+    project: Option<&str>, requester_pays: bool,
 ) -> Bytes {
     let mut head: HashMap<&str, String> = HashMap::new();
+    let mut extra: String = String::new();
     if let Some(tok_str) = tok {
         head.insert("authorization", tok_str);
         if let Some(proj) = project {
             head.insert("x-goog-user-project", proj.to_string());
+            if requester_pays {
+                extra.extend(format!("&userProject={}", proj).chars());
+            }
         };
     }
     let (bucket, key) = path.split_once("/").unwrap();
     // or STORAGE_EMULATOR_HOST env var for testing
     let host = "https://storage.googleapis.com";
     let url = format!(
-        "{}/download/storage/v1/b/{}/o/{}?alt=media",
-        host, bucket, key
+        "{}/download/storage/v1/b/{}/o/{}?alt=media{}",
+        host,
+        bucket,
+        encode(key),
+        extra
     );
     get_url_or(&url[..], start, end, head, &reqwest::Method::GET).await
 }
@@ -330,23 +337,22 @@ async fn gcs_get_range(
 #[pyfunction]
 fn gcs_cat_ranges<'py>(
     py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
-    anon: bool, project: Option<&str>,
+    anon: bool, project: Option<&str>, requester_pays: bool,
 ) -> &'py PyTuple {
     let mut result: Vec<Bytes> = Vec::with_capacity(path.len());
-    let coroutine =
-        async {
-            let tok: Option<String> = match anon {
-                true => None,
-                false => Some(gcs().await.token().await.unwrap()),
-            };
-            join_all(path.iter().zip(start).zip(end).map(|((u, st), e)| {
-                gcs_get_range(u, tok.clone(), st, e, project)
-            }))
-            .await
-            .into_iter()
-            .map(|out: Bytes| result.push(out))
-            .count()
+    let coroutine = async {
+        let tok: Option<String> = match anon {
+            true => None,
+            false => Some(gcs().await.token().await.unwrap()),
         };
+        join_all(path.iter().zip(start).zip(end).map(|((u, st), e)| {
+            gcs_get_range(u, tok.clone(), st, e, project, requester_pays)
+        }))
+        .await
+        .into_iter()
+        .map(|out: Bytes| result.push(out))
+        .count()
+    };
     py.allow_threads(|| RUNTIME.block_on(coroutine));
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
