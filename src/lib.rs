@@ -397,6 +397,8 @@ fn azure_cat_ranges<'py>(
         true => StorageCredentials::Anonymous,
         false => StorageCredentials::Key(account.clone(), key.unwrap()),
     };
+    // TODO: some part of the client creation should be cached; `client` here is
+    //  only a "builder" so probably nothing has happened yet
     let client = ClientBuilder::new(account, cred);
     let coroutine = async {
         join_all(
