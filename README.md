@@ -1,7 +1,7 @@
 # rfsspec
 Rust python FSs
 
-Implements s3, gcs and HTTP backends for fsspec using Rust.
+Implements s3, gcs, azure blob and HTTP backends for fsspec using Rust.
 
 Respects concurrency of many simultaneous requests as made by
 fsspec, but 
@@ -36,6 +36,11 @@ The GCS backend supports:
 - ranges
 - requester-pays
 - assumes credentials via env variables and gcloud CLI
+
+The Azure blob backend supports
+- anon
+- ranges
+- account/key auth (account always required)
 
 ### Installation
 

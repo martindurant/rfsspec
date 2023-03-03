@@ -357,6 +357,65 @@ fn gcs_cat_ranges<'py>(
     PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
 }
 
+use azure_core::request_options::Range as ARange;
+use azure_storage::prelude::StorageCredentials;
+use azure_storage_blobs::prelude::ClientBuilder;
+use futures::StreamExt;
+
+async fn azure_get_range(
+    client: ClientBuilder, path: &str, start: usize, end: usize,
+) -> Vec<u8> {
+    let (container, key) = path.split_once("/").unwrap();
+    let blob = client.blob_client(container, key);
+    let mut out = Vec::new();
+    let getter = if (start > 0) | (end > 0) {
+        blob.get().range(ARange::new(start as u64, end as u64))
+    } else {
+        blob.get()
+    };
+    let mut stream = getter.into_stream();
+    while let Some(value) = stream.next().await {
+        // could have been done neater with ? operator in a try block
+        match value {
+            Ok(data) => match data.data.collect().await {
+                Ok(d) => out.extend(&d),
+                Err(e) => out.extend(format!("AZURE ERROR: {}", e).as_bytes()),
+            },
+            Err(e) => out.extend(format!("AZURE ERROR: {}", e).as_bytes()),
+        }
+    }
+    out
+}
+
+#[pyfunction]
+fn azure_cat_ranges<'py>(
+    py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
+    account: String, key: Option<String>, anon: bool,
+) -> &'py PyTuple {
+    let mut result: Vec<Vec<u8>> = Vec::with_capacity(path.len());
+    let cred = match anon {
+        true => StorageCredentials::Anonymous,
+        false => StorageCredentials::Key(account.clone(), key.unwrap()),
+    };
+    // TODO: some part of the client creation should be cached; `client` here is
+    //  only a "builder" so probably nothing has happened yet
+    let client = ClientBuilder::new(account, cred);
+    let coroutine = async {
+        join_all(
+            path.iter()
+                .zip(start)
+                .zip(end)
+                .map(|((u, st), e)| azure_get_range(client.clone(), u, st, e)),
+        )
+        .await
+        .into_iter()
+        .map(|out| result.push(out))
+        .count()
+    };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    PyTuple::new(py, result.iter().map(|r| PyBytes::new(py, &r[..])))
+}
+
 /// A Python module implemented in Rust.
 #[pymodule]
 fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -364,5 +423,6 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get, m)?)?;
     m.add_function(wrap_pyfunction!(s3_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(gcs_cat_ranges, m)?)?;
+    m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
     Ok(())
 }
