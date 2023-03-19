@@ -1,8 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
-from rfsspec.rfsspec import s3_cat_ranges
+from rfsspec.rfsspec import s3_cat_ranges, s3_info
 
-from fsspec.spec import AbstractFileSystem
+from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 
 
 class RustyS3FileSystem(AbstractFileSystem):
@@ -43,3 +43,21 @@ class RustyS3FileSystem(AbstractFileSystem):
 
     def cat_ranges(self, urls, starts, ends, **kwargs):
         return s3_cat_ranges(urls, start=starts, end=ends, **self.kwargs)
+
+    def info(self, path):
+        info = s3_info(path, **self.kwargs)
+        info["type"] = "file"
+        info["name"] = path
+        return info
+
+    def _open(self, path, mode="rb", **kwargs):
+        if mode != "rb":
+            raise NotImplementedError
+        size = int(self.info(path)["size"])
+        return RustyS3File(self, path, size=size)
+
+
+class RustyS3File(AbstractBufferedFile):
+
+    def _fetch_range(self, start, end):
+        return self.fs.cat_file(self.path, start=start, end=end)

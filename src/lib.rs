@@ -275,6 +275,37 @@ async fn s3_get_one_range(
 }
 
 #[pyfunction]
+fn s3_info(
+    py: Python, path: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
+) -> HashMap<String, String> {
+    let mut output: HashMap<String, String> = HashMap::new();
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let out = path.split_once("/");
+        match out {
+            None => output
+                .insert("error".to_string(), "S3 ERROR: bad path".to_string()),
+            Some((bucket, key)) => {
+                let resp = s3_client
+                    .head_object()
+                    .bucket(bucket)
+                    .key(key)
+                    .send()
+                    .await
+                    .unwrap();
+                output.insert(
+                    "size".to_string(),
+                    format!("{}", resp.content_length()),
+                )
+            }
+        };
+    };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    output
+}
+
+#[pyfunction]
 fn s3_cat_ranges<'py>(
     py: Python<'py>, path: Vec<&str>, region: Option<&str>,
     profile: Option<&str>, endpoint_url: Option<&str>, start: Vec<usize>,
@@ -424,5 +455,6 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(gcs_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_info, m)?)?;
     Ok(())
 }
