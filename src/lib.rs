@@ -275,6 +275,66 @@ async fn s3_get_one_range(
 }
 
 #[pyfunction]
+fn s3_find<'py>(
+    py: Python<'py>, path: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
+) -> &'py PyTuple {
+    let mut output: Vec<HashMap<String, String>> = Vec::new();
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let out = path.split_once("/");
+        if let Some((bucket, key)) = out {
+            let mut tok: Option<String> = None;
+            loop {
+                let mut resp =
+                    s3_client.list_objects_v2().bucket(bucket).prefix(key);
+                if requester_pays {
+                    resp =
+                        resp.set_request_payer(Some(RequestPayer::Requester));
+                };
+                if let Some(tt) = tok {
+                    resp = resp.continuation_token(tt);
+                }
+                let resp = if anon {
+                    resp.customize()
+                        .await
+                        .unwrap()
+                        .map_operation(make_unsigned)
+                        .unwrap()
+                        .send()
+                        .await
+                } else {
+                    resp.send().await
+                };
+                if let Ok(page) = resp {
+                    tok =
+                        page.next_continuation_token().map(|t| t.to_string());
+
+                    for ob in page.contents().unwrap().iter() {
+                        let mut h: HashMap<String, String> = HashMap::new();
+                        h.insert(
+                            "name".to_string(),
+                            format!("{}/{}", bucket, ob.key().unwrap()),
+                        );
+                        h.insert("size".to_string(), ob.size().to_string());
+                        output.push(h)
+                    }
+                    if tok.is_none() {
+                        // last response
+                        break;
+                    }
+                } else {
+                    // no response
+                    break;
+                }
+            }
+        };
+    };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    PyTuple::new(py, output.iter().map(|r| r.to_object(py)))
+}
+
+#[pyfunction]
 fn s3_info(
     py: Python, path: &str, region: Option<&str>, profile: Option<&str>,
     endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
@@ -287,13 +347,23 @@ fn s3_info(
             None => output
                 .insert("error".to_string(), "S3 ERROR: bad path".to_string()),
             Some((bucket, key)) => {
-                let resp = s3_client
-                    .head_object()
-                    .bucket(bucket)
-                    .key(key)
-                    .send()
-                    .await
-                    .unwrap();
+                let mut resp = s3_client.head_object().bucket(bucket).key(key);
+                if requester_pays {
+                    resp =
+                        resp.set_request_payer(Some(RequestPayer::Requester));
+                }
+                let resp = if anon {
+                    resp.customize()
+                        .await
+                        .unwrap()
+                        .map_operation(make_unsigned)
+                        .unwrap()
+                        .send()
+                        .await
+                } else {
+                    resp.send().await
+                };
+                let resp = resp.unwrap();
                 output.insert(
                     "size".to_string(),
                     format!("{}", resp.content_length()),
@@ -456,5 +526,6 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(gcs_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(s3_info, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_find, m)?)?;
     Ok(())
 }
