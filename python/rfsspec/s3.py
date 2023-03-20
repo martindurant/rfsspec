@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from rfsspec.rfsspec import s3_cat_ranges, s3_info
+from rfsspec.rfsspec import s3_cat_ranges, s3_info, s3_find
 
 from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 
@@ -56,8 +56,15 @@ class RustyS3FileSystem(AbstractFileSystem):
         size = int(self.info(path)["size"])
         return RustyS3File(self, path, size=size)
 
+    def find(self, path):
+        return s3_find(path, **self.kwargs)
 
 class RustyS3File(AbstractBufferedFile):
 
     def _fetch_range(self, start, end):
         return self.fs.cat_file(self.path, start=start, end=end)
+
+
+def get_bucket_region(bucket):
+    import requests
+    return requests.head(f"https://{bucket}.s3.amazonaws.com").headers["x-amz-bucket-region"]
