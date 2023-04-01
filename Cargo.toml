@@ -9,7 +9,7 @@ name = "rfsspec"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.17.3", features = ["extension-module"] }
+pyo3 = { version = "0.18.2", features = ["extension-module", "macros"] }
 tokio = { version = "1.24", features = ["rt", "fs"] }
 reqwest = { version = "0.11.14", features = ["stream"] }
 futures = "0.3.26"
@@ -22,9 +22,9 @@ aws-smithy-http = "0.54.3"
 aws-sig-auth = "0.54.1"
 google_auth = "0.2.1"
 urlencoding = "2.1.2"
-azure_core = "0.10.0"
-azure_storage = "0.10.0"
-azure_storage_blobs = "0.10.0"
+azure_core = "0.11.0"
+azure_storage = "0.11.0"
+azure_storage_blobs = "0.11.0"
 
 [profile.release]
 opt-level = 3
