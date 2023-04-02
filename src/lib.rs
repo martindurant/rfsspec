@@ -289,8 +289,7 @@ fn s3_find<'py>(
                 let mut resp =
                     s3_client.list_objects_v2().bucket(bucket).prefix(key);
                 if requester_pays {
-                    resp =
-                        resp.set_request_payer(Some(RequestPayer::Requester));
+                    resp = resp.request_payer(RequestPayer::Requester);
                 };
                 if let Some(tt) = tok {
                     resp = resp.continuation_token(tt);
@@ -349,8 +348,7 @@ fn s3_info(
             Some((bucket, key)) => {
                 let mut resp = s3_client.head_object().bucket(bucket).key(key);
                 if requester_pays {
-                    resp =
-                        resp.set_request_payer(Some(RequestPayer::Requester));
+                    resp = resp.request_payer(RequestPayer::Requester);
                 }
                 let resp = if anon {
                     resp.customize()
