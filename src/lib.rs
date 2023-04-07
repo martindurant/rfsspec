@@ -1,3 +1,5 @@
+mod io;
+
 use bytes::Bytes;
 use futures::future::join_all;
 #[macro_use]
@@ -219,6 +221,55 @@ fn make_unsigned<O, Retry>(
     Ok(operation)
 }
 
+#[pyfunction]
+fn s3_init_upload(
+    py: Python, url: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>,
+) -> PyResult<String> {
+    let out = url.split_once("/");
+    let mut s = String::new();
+    match out {
+        None => s.extend("S3 ERROR: bad path".chars()),
+        Some((bucket, key)) => {
+            let coroutine = async {
+                let s3_client = s3(region, profile, endpoint_url).await;
+                let resp = s3_client
+                    .create_multipart_upload()
+                    .bucket(bucket)
+                    .key(key)
+                    .send()
+                    .await;
+                s.extend(resp.unwrap().upload_id().unwrap().chars());
+            };
+            py.allow_threads(|| RUNTIME.block_on(coroutine));
+        }
+    }
+    Ok(s)
+}
+
+#[pyfunction]
+fn s3_upload_chunk(
+    py: Python, url: &str, mpu: &str, data: Vec<u8>, part: i32,
+    region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
+) -> () {
+    let out = url.split_once("/");
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let (bucket, key) = out.unwrap();
+        s3_client
+            .upload_part()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(mpu)
+            .part_number(part)
+            .body(data.into())
+            .send()
+            .await
+            .unwrap();
+    };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+}
+
 async fn s3_get_one_range(
     url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
     anon: bool,
@@ -227,7 +278,6 @@ async fn s3_get_one_range(
     match out {
         None => b"S3 ERROR: bad path".to_vec(),
         Some((bucket, key)) => {
-            let mut result: Vec<u8> = Vec::new();
             let mut resp = s3.get_object().bucket(bucket).key(key);
             if (start > 0) | (end > 0) {
                 resp = resp.set_range(Some(format!(
@@ -251,25 +301,19 @@ async fn s3_get_one_range(
                 resp.send().await
             };
             match resp {
-                // Convert the body into a string
-                //let data = object.body.collect().await.unwrap().into_bytes();
-                Ok(r) => {
-                    let b = r.body.collect().await.unwrap().into_bytes();
-                    result.extend(b.to_vec());
-                }
+                // Convert the body into a bytes vec
+                Ok(r) => r.body.collect().await.unwrap().into_bytes().to_vec(),
                 Err(SdkError::ResponseError(e)) => {
-                    result.extend(b"S3 ERRROR: ");
-                    result.extend(e.raw().http().body().bytes().unwrap())
+                    [b"S3 ERRROR: ", e.raw().http().body().bytes().unwrap()]
+                        .concat()
                 }
                 Err(SdkError::ServiceError(e)) => {
-                    result.extend(b"S3 ERRROR: ");
-                    result.extend(e.raw().http().body().bytes().unwrap())
+                    [b"S3 ERRROR: ", e.raw().http().body().bytes().unwrap()]
+                        .concat()
+                        .to_vec()
                 }
-                Err(e) => {
-                    result.extend(format!("S3 ERRROR: {}", e).as_bytes())
-                }
+                Err(e) => format!("S3 ERRROR: {}", e).as_bytes().to_vec(),
             }
-            result
         }
     }
 }
@@ -525,5 +569,10 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(s3_info, m)?)?;
     m.add_function(wrap_pyfunction!(s3_find, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_init_upload, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_upload_chunk, m)?)?;
+    m.add_function(wrap_pyfunction!(io::pybytes_from_pybytes, m)?)?;
+    m.add_function(wrap_pyfunction!(io::pybuf_from_pybuf, m)?)?;
+    m.add_class::<io::ArcVec>()?;
     Ok(())
 }
