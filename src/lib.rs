@@ -6,7 +6,7 @@ use futures::future::join_all;
 extern crate lazy_static;
 use google_auth::TokenManager;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -270,6 +270,33 @@ fn s3_upload_chunk(
     py.allow_threads(|| RUNTIME.block_on(coroutine));
 }
 
+use aws_smithy_http::byte_stream::ByteStream;
+
+#[pyfunction]
+fn s3_pipe(
+    py: Python, data: HashMap<&str, Vec<u8>>, region: Option<&str>,
+    profile: Option<&str>, endpoint_url: Option<&str>,
+) -> () {
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let results = join_all(data.iter().map(|(url, data)| {
+            let out = url.split_once("/");
+            let (bucket, key) = out.unwrap();
+            s3_client
+                .put_object()
+                .bucket(bucket)
+                .key(key)
+                .body(ByteStream::from(data.to_owned()))
+                .send()
+        }))
+        .await;
+        //results.iter().map(|r|r.);
+        println!("{:?}", results)
+    };
+
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+}
+
 async fn s3_get_one_range(
     url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
     anon: bool,
@@ -503,6 +530,7 @@ fn gcs_cat_ranges<'py>(
 use azure_core::request_options::Range as ARange;
 use azure_storage::prelude::StorageCredentials;
 use azure_storage_blobs::prelude::ClientBuilder;
+use futures::future::MaybeDone::Future;
 use futures::StreamExt;
 
 async fn azure_get_range(
@@ -571,6 +599,7 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_find, m)?)?;
     m.add_function(wrap_pyfunction!(s3_init_upload, m)?)?;
     m.add_function(wrap_pyfunction!(s3_upload_chunk, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_pipe, m)?)?;
     m.add_function(wrap_pyfunction!(io::pybytes_from_pybytes, m)?)?;
     m.add_function(wrap_pyfunction!(io::pybuf_from_pybuf, m)?)?;
     m.add_class::<io::ArcVec>()?;

@@ -1,5 +1,5 @@
 from functools import lru_cache
-from rfsspec.rfsspec import s3_cat_ranges, s3_info, s3_find
+from rfsspec.rfsspec import s3_cat_ranges, s3_info, s3_find, s3_pipe, s3_init_upload, s3_upload_chunk
 
 from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 
@@ -51,6 +51,15 @@ class RustyS3FileSystem(AbstractFileSystem):
         info["name"] = path
         return info
 
+    def pipe(self, path, value=None):
+        # pipes only just one for now, for use bu the file-like API
+        if isinstance(path, str):
+            path = {path: value}
+        kw = self.kwargs.copy()
+        kw.pop("anon")
+        kw.pop("requester_pays")
+        s3_pipe(path, **kw)
+
     def _open(self, path, mode="rb", **kwargs):
         if mode != "rb":
             raise NotImplementedError
@@ -64,9 +73,25 @@ class RustyS3FileSystem(AbstractFileSystem):
 
 
 class RustyS3File(AbstractBufferedFile):
-
+    DEFAULT_BLOCK_SIZE = 50*2**20
+    mpu = None
     def _fetch_range(self, start, end):
         return self.fs.cat_file(self.path, start=start, end=end)
+
+    def _upload_chunk(self, final=False):
+        if final:
+            if self.mpu is None:
+                # one-shot upload
+                self.fs.pipe(self.path, self.buffer.getvalue())
+                return True
+            else:
+                # send data and complete MPU
+                raise NotImplementedError
+        elif self.buffer.tell() > self.chunksise:
+            # init upload
+            # send data
+            raise NotImplementedError
+
 
 
 @lru_cache()
