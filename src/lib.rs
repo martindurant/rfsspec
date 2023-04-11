@@ -1,10 +1,12 @@
+mod io;
+
 use bytes::Bytes;
 use futures::future::join_all;
 #[macro_use]
 extern crate lazy_static;
 use google_auth::TokenManager;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use reqwest;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -167,6 +169,7 @@ fn cat_ranges<'a>(
 use aws_config::profile::ProfileFileCredentialsProvider;
 use aws_sdk_s3::model::RequestPayer;
 use aws_sdk_s3::{Client, Region};
+use aws_smithy_http::body::SdkBody;
 use aws_smithy_http::result::SdkError;
 
 async fn s3(
@@ -219,6 +222,148 @@ fn make_unsigned<O, Retry>(
     Ok(operation)
 }
 
+#[pyfunction]
+fn s3_init_upload(
+    py: Python, url: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>,
+) -> PyResult<String> {
+    let out = url.split_once("/");
+    let mut s = String::new();
+    match out {
+        None => s.extend("S3 ERROR: bad path".chars()),
+        Some((bucket, key)) => {
+            let coroutine = async {
+                let s3_client = s3(region, profile, endpoint_url).await;
+                let resp = s3_client
+                    .create_multipart_upload()
+                    .bucket(bucket)
+                    .key(key)
+                    .send()
+                    .await;
+                s.extend(resp.unwrap().upload_id().unwrap().chars());
+            };
+            py.allow_threads(|| RUNTIME.block_on(coroutine));
+        }
+    }
+    Ok(s)
+}
+
+#[pyfunction]
+fn s3_upload_chunk(
+    py: Python, url: &str, mpu: &str, data: Vec<u8>, part: i32,
+    region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
+) -> String {
+    let out = url.split_once("/");
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let (bucket, key) = out.unwrap();
+        s3_client
+            .upload_part()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(mpu)
+            .part_number(part)
+            .body(data.into())
+            .send()
+            .await
+            .unwrap()
+    };
+    let res = py.allow_threads(|| RUNTIME.block_on(coroutine));
+    res.e_tag().unwrap().to_string()
+}
+
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
+
+/// parts: dict(part_number: etag)
+#[pyfunction]
+fn s3_complete_upload(
+    py: Python, url: &str, mpu: &str, mut parts: HashMap<i32, &str>,
+    region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
+) -> PyResult<()> {
+    let out = url.split_once("/");
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let (bucket, key) = out.unwrap();
+        let part_info: Vec<CompletedPart> = parts
+            .drain()
+            .map(|(part, etag)| {
+                CompletedPart::builder().e_tag(etag).part_number(part).build()
+            })
+            .collect();
+        let x = s3_client
+            .complete_multipart_upload()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(mpu)
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(part_info))
+                    .build(),
+            )
+            .send()
+            .await;
+        x
+    };
+    let res = py.allow_threads(|| RUNTIME.block_on(coroutine));
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) => Err(PyRuntimeError::new_err(e.to_string())),
+    }
+}
+//            part_info = {"Parts": self.parts}
+//             write_result = self._call_s3(
+//                 "complete_multipart_upload",
+//                 Bucket=self.bucket,
+//                 Key=self.key,
+//                 UploadId=self.mpu["UploadId"],
+//                 MultipartUpload=part_info,
+//             )
+
+use aws_smithy_http::byte_stream::ByteStream;
+
+#[pyfunction]
+fn s3_pipe(
+    py: Python, data: &PyDict, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>,
+) -> Vec<String> {
+    // no-copy convert bytes to u8 slices
+    let mut data_map: HashMap<&str, &[u8]> =
+        HashMap::with_capacity(data.len());
+    data.iter().for_each(|(key, value)| {
+        let url: &str = key.extract().unwrap();
+        let data: &PyBytes = value.extract().unwrap();
+        let b = data.as_bytes();
+        data_map.insert(url, b);
+    });
+
+    // perform uploads
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let mut results = join_all(data_map.drain().map(|(url, data)| {
+            let out = url.split_once("/");
+            let (bucket, key) = out.unwrap();
+            s3_client
+                .put_object()
+                .bucket(bucket)
+                .key(key)
+                .body(ByteStream::from(SdkBody::from(data)))
+                .send()
+        }))
+        .await;
+        // convert results, giving error or e-tag in original order
+        let res: Vec<String> = results
+            .drain(..)
+            .map(|r| match r {
+                Ok(res) => res.e_tag().unwrap().into(),
+                Err(e) => format!("S3 ERROR: {}", e),
+            })
+            .collect();
+        res
+    };
+
+    py.allow_threads(|| RUNTIME.block_on(coroutine))
+}
+
 async fn s3_get_one_range(
     url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
     anon: bool,
@@ -227,7 +372,6 @@ async fn s3_get_one_range(
     match out {
         None => b"S3 ERROR: bad path".to_vec(),
         Some((bucket, key)) => {
-            let mut result: Vec<u8> = Vec::new();
             let mut resp = s3.get_object().bucket(bucket).key(key);
             if (start > 0) | (end > 0) {
                 resp = resp.set_range(Some(format!(
@@ -251,25 +395,19 @@ async fn s3_get_one_range(
                 resp.send().await
             };
             match resp {
-                // Convert the body into a string
-                //let data = object.body.collect().await.unwrap().into_bytes();
-                Ok(r) => {
-                    let b = r.body.collect().await.unwrap().into_bytes();
-                    result.extend(b.to_vec());
-                }
+                // Convert the body into a bytes vec
+                Ok(r) => r.body.collect().await.unwrap().into_bytes().to_vec(),
                 Err(SdkError::ResponseError(e)) => {
-                    result.extend(b"S3 ERRROR: ");
-                    result.extend(e.raw().http().body().bytes().unwrap())
+                    [b"S3 ERRROR: ", e.raw().http().body().bytes().unwrap()]
+                        .concat()
                 }
                 Err(SdkError::ServiceError(e)) => {
-                    result.extend(b"S3 ERRROR: ");
-                    result.extend(e.raw().http().body().bytes().unwrap())
+                    [b"S3 ERRROR: ", e.raw().http().body().bytes().unwrap()]
+                        .concat()
+                        .to_vec()
                 }
-                Err(e) => {
-                    result.extend(format!("S3 ERRROR: {}", e).as_bytes())
-                }
+                Err(e) => format!("S3 ERRROR: {}", e).as_bytes().to_vec(),
             }
-            result
         }
     }
 }
@@ -460,6 +598,7 @@ use azure_core::request_options::Range as ARange;
 use azure_storage::prelude::StorageCredentials;
 use azure_storage_blobs::prelude::ClientBuilder;
 use futures::StreamExt;
+use pyo3::exceptions::PyRuntimeError;
 
 async fn azure_get_range(
     client: ClientBuilder, path: &str, start: usize, end: usize,
@@ -525,5 +664,12 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(s3_info, m)?)?;
     m.add_function(wrap_pyfunction!(s3_find, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_init_upload, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_upload_chunk, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_pipe, m)?)?;
+    //m.add_function(wrap_pyfunction!(io::pybytes_from_pybytes, m)?)?;
+    //m.add_function(wrap_pyfunction!(io::pybuf_from_pybuf, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_complete_upload, m)?)?;
+    m.add_class::<io::ArcVec>()?;
     Ok(())
 }
