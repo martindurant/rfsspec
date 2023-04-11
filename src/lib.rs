@@ -279,7 +279,7 @@ use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
 fn s3_complete_upload(
     py: Python, url: &str, mpu: &str, mut parts: HashMap<i32, &str>,
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
-) -> () {
+) -> PyResult<()> {
     let out = url.split_once("/");
     let coroutine = async {
         let s3_client = s3(region, profile, endpoint_url).await;
@@ -290,7 +290,7 @@ fn s3_complete_upload(
                 CompletedPart::builder().e_tag(etag).part_number(part).build()
             })
             .collect();
-        s3_client
+        let x = s3_client
             .complete_multipart_upload()
             .bucket(bucket)
             .key(key)
@@ -301,10 +301,14 @@ fn s3_complete_upload(
                     .build(),
             )
             .send()
-            .await
-            .unwrap();
+            .await;
+        x
     };
-    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    let res = py.allow_threads(|| RUNTIME.block_on(coroutine));
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) => Err(PyRuntimeError::new_err(e.to_string())),
+    }
 }
 //            part_info = {"Parts": self.parts}
 //             write_result = self._call_s3(
@@ -594,6 +598,7 @@ use azure_core::request_options::Range as ARange;
 use azure_storage::prelude::StorageCredentials;
 use azure_storage_blobs::prelude::ClientBuilder;
 use futures::StreamExt;
+use pyo3::exceptions::PyRuntimeError;
 
 async fn azure_get_range(
     client: ClientBuilder, path: &str, start: usize, end: usize,
