@@ -32,6 +32,8 @@ jobs:
         shell: bash -l {0}
         run: |
           pip install dist/* --no-deps --force-reinstall
+          git clone https://github.com/fsspec/s3fs
+          pip install -e s3fs
       - name: test
         shell: bash -l {0}
         run: |
