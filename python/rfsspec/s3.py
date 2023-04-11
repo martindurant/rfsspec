@@ -1,5 +1,6 @@
 from functools import lru_cache
-from rfsspec.rfsspec import s3_cat_ranges, s3_info, s3_find, s3_pipe, s3_init_upload, s3_upload_chunk
+from rfsspec.rfsspec import (s3_cat_ranges, s3_info, s3_find, s3_pipe, s3_init_upload,
+                             s3_upload_chunk, s3_complete_upload)
 
 from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 
@@ -40,7 +41,7 @@ class RustyS3FileSystem(AbstractFileSystem):
                 paths, start=[start or 0] * len(path), end=[end or 0] * len(path), **self.kwargs))}
             return out
         else:
-            return self.cat_file(paths[0], start=start, end=end, **kwargs)
+            return s3_cat_ranges(paths, start=[start or 0], end=[end or 0], **self.kwargs)
 
     def cat_ranges(self, urls, starts, ends, **kwargs):
         return s3_cat_ranges(urls, start=starts, end=ends, **self.kwargs)
@@ -61,12 +62,10 @@ class RustyS3FileSystem(AbstractFileSystem):
         s3_pipe(path, **kw)
 
     def _open(self, path, mode="rb", **kwargs):
-        if mode != "rb":
-            raise NotImplementedError
-        size = int(self.info(path)["size"])
+        size = int(self.info(path)["size"]) if "r" in mode else None
         if "cache_type" not in kwargs:
             kwargs["cache_type"] = self.default_cache_type
-        return RustyS3File(self, path, size=size, **kwargs)
+        return RustyS3File(self, path, mode=mode, size=size, **kwargs)
 
     def find(self, path):
         return s3_find(path, **self.kwargs)
@@ -79,19 +78,29 @@ class RustyS3File(AbstractBufferedFile):
         return self.fs.cat_file(self.path, start=start, end=end)
 
     def _upload_chunk(self, final=False):
+        kw = self.fs.kwargs.copy()
+        kw.pop("requester_pays")
+        kw.pop("anon")
         if final:
             if self.mpu is None:
                 # one-shot upload
                 self.fs.pipe(self.path, self.buffer.getvalue())
-                return True
             else:
-                # send data and complete MPU
-                raise NotImplementedError
+                part = len(self.parts) + 1
+                self.parts[part] = s3_upload_chunk(self.path, self.mpu, part, **kw)
+                s3_complete_upload(self.path, self.mpu, self.parts)
         elif self.buffer.tell() > self.chunksise:
-            # init upload
-            # send data
-            raise NotImplementedError
+            if self.mpu is None:
+                self.mpu = s3_init_upload(self.path, **kw)
+                self.parts = [s3_upload_chunk(self.path, self.mpu, 0, **kw)]
+            else:
+                part = len(self.parts) + 1
+                self.parts[part] = s3_upload_chunk(self.path, self.mpu, part, **kw)
+        else:
+            # nothing to do
+            return False
 
+        return True
 
 
 @lru_cache()

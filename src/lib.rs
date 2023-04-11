@@ -252,7 +252,7 @@ fn s3_init_upload(
 fn s3_upload_chunk(
     py: Python, url: &str, mpu: &str, data: Vec<u8>, part: i32,
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
-) -> () {
+) -> String {
     let out = url.split_once("/");
     let coroutine = async {
         let s3_client = s3(region, profile, endpoint_url).await;
@@ -266,10 +266,54 @@ fn s3_upload_chunk(
             .body(data.into())
             .send()
             .await
+            .unwrap()
+    };
+    let res = py.allow_threads(|| RUNTIME.block_on(coroutine));
+    res.e_tag().unwrap().to_string()
+}
+
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
+
+/// parts: dict(part_number: etag)
+#[pyfunction]
+fn s3_complete_upload(
+    py: Python, url: &str, mpu: &str, mut parts: HashMap<i32, &str>,
+    region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
+) -> () {
+    let out = url.split_once("/");
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let (bucket, key) = out.unwrap();
+        let part_info: Vec<CompletedPart> = parts
+            .drain()
+            .map(|(part, etag)| {
+                CompletedPart::builder().e_tag(etag).part_number(part).build()
+            })
+            .collect();
+        s3_client
+            .complete_multipart_upload()
+            .bucket(bucket)
+            .key(key)
+            .upload_id(mpu)
+            .multipart_upload(
+                CompletedMultipartUpload::builder()
+                    .set_parts(Some(part_info))
+                    .build(),
+            )
+            .send()
+            .await
             .unwrap();
     };
     py.allow_threads(|| RUNTIME.block_on(coroutine));
 }
+//            part_info = {"Parts": self.parts}
+//             write_result = self._call_s3(
+//                 "complete_multipart_upload",
+//                 Bucket=self.bucket,
+//                 Key=self.key,
+//                 UploadId=self.mpu["UploadId"],
+//                 MultipartUpload=part_info,
+//             )
 
 use aws_smithy_http::byte_stream::ByteStream;
 
@@ -620,6 +664,7 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(s3_pipe, m)?)?;
     //m.add_function(wrap_pyfunction!(io::pybytes_from_pybytes, m)?)?;
     //m.add_function(wrap_pyfunction!(io::pybuf_from_pybuf, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_complete_upload, m)?)?;
     m.add_class::<io::ArcVec>()?;
     Ok(())
 }

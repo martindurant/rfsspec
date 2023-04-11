@@ -9,4 +9,7 @@ dependencies:
   - requests
   - openssl
   - maturin
+  - moto
+  - flask
+  - s3fs
   - rust
