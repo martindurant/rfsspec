@@ -42,17 +42,16 @@ impl ArcVec {
         Ok(&self.data[indices.start as usize..indices.stop as usize])
     }
 
-    /// n<0 implies read all
-    pub fn read(&mut self, n: i64) -> &[u8] {
+    /// n<0 or None implies read all
+    pub fn read(&mut self, n: Option<i64>) -> &[u8] {
         let here = match self.loc {
             x if x < 0 => 0,
             x if x > self.data.len() as i64 => self.data.len(),
             x => x as usize,
         };
-        if n >= 0 {
-            self.loc += n
-        } else {
-            self.loc = self.data.len() as i64
+        self.loc = match n {
+            Some(n) if n >= 0 => self.loc + n,
+            Some(_) | None => self.data.len() as i64,
         };
         let there = match self.loc {
             x if x < 0 => 0,
