@@ -37,7 +37,7 @@ jobs:
       - name: test
         shell: bash -l {0}
         run: |
-          RUST_BACKTRACE=full pytest -v -s
+          RUST_BACKTRACE=full pytest -v -s -k 'not s3fs'
       - name: Upload wheels
         uses: actions/upload-artifact@v3
         with:

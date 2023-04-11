@@ -41,7 +41,7 @@ class RustyS3FileSystem(AbstractFileSystem):
                 paths, start=[start or 0] * len(path), end=[end or 0] * len(path), **self.kwargs))}
             return out
         else:
-            return s3_cat_ranges(paths, start=[start or 0], end=[end or 0], **self.kwargs)
+            return s3_cat_ranges(paths, start=[start or 0], end=[end or 0], **self.kwargs)[0]
 
     def cat_ranges(self, urls, starts, ends, **kwargs):
         return s3_cat_ranges(urls, start=starts, end=ends, **self.kwargs)
@@ -72,8 +72,9 @@ class RustyS3FileSystem(AbstractFileSystem):
 
 
 class RustyS3File(AbstractBufferedFile):
-    DEFAULT_BLOCK_SIZE = 50*2**20
+    DEFAULT_BLOCK_SIZE = 50*2**20  # TODO: enforce 5MB minimum?
     mpu = None
+
     def _fetch_range(self, start, end):
         return self.fs.cat_file(self.path, start=start, end=end)
 
@@ -87,15 +88,15 @@ class RustyS3File(AbstractBufferedFile):
                 self.fs.pipe(self.path, self.buffer.getvalue())
             else:
                 part = len(self.parts) + 1
-                self.parts[part] = s3_upload_chunk(self.path, self.mpu, part, **kw)
-                s3_complete_upload(self.path, self.mpu, self.parts)
-        elif self.buffer.tell() > self.chunksise:
+                self.parts[part] = s3_upload_chunk(self.path, self.mpu, self.buffer.getbuffer(), part, **kw)
+                s3_complete_upload(self.path, self.mpu, self.parts, **kw)
+        elif self.buffer.tell() > self.blocksize:
             if self.mpu is None:
                 self.mpu = s3_init_upload(self.path, **kw)
-                self.parts = [s3_upload_chunk(self.path, self.mpu, 0, **kw)]
+                self.parts = {1: s3_upload_chunk(self.path, self.mpu, self.buffer.getbuffer(), 1, **kw)}
             else:
                 part = len(self.parts) + 1
-                self.parts[part] = s3_upload_chunk(self.path, self.mpu, part, **kw)
+                self.parts[part] = s3_upload_chunk(self.path, self.mpu,self.buffer.getbuffer(), part, **kw)
         else:
             # nothing to do
             return False
