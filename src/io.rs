@@ -1,19 +1,24 @@
-use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::PyMemoryError;
-use pyo3::ffi::Py_ssize_t;
+use pyo3::exceptions::{PyBufferError, PyValueError};
+use pyo3::ffi;
+use pyo3::ffi::{Py_buffer, Py_ssize_t};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
-use pyo3::{ffi, AsPyPointer};
-use std::ffi::{c_char, c_void};
-use std::ptr::copy_nonoverlapping;
-use std::sync::{Arc, Mutex};
+use pyo3::types::PySlice;
+use pyo3::{AsPyPointer, PyAny, PyResult, Python};
+use std::ffi::c_long;
+use std::ptr;
+use std::sync::Arc;
 
+/// Rust-side buffer which can be zero-copy viewed in python
+///
+/// Expected usage is with memoryview() to do further slicing, with [..] to get
+/// direct slicing (which will yield bytes) and a simple file-like interface,
+/// which also yields bytes.
+///
+/// This object can be shared between threads.
 #[pyclass]
 pub struct ArcVec {
-    // inspired by https://github.com/PyO3/pyo3/blob/
-    //   3b3ba4e3abd57bc3b8f86444b3f61e6e2f4c5fc1/tests/test_buffer_protocol.rs#L16
-    data: PyBuffer<u8>,
-    obj: *mut ffi::PyObject,
+    data: Arc<Vec<u8>>,
+    loc: i64,
 }
 
 unsafe impl Send for ArcVec {}
@@ -21,36 +26,100 @@ unsafe impl Send for ArcVec {}
 #[pymethods]
 impl ArcVec {
     #[new]
-    pub fn new(data: &PyAny) -> ArcVec {
-        let ptr = data.as_ptr();
-        let buf: PyBuffer<u8> = PyBuffer::get(data).unwrap();
-        ArcVec { data: buf, obj: ptr }
+    pub fn new(n: usize) -> ArcVec {
+        let buf: Vec<u8> = b"0".repeat(n).to_vec();
+        ArcVec { data: Arc::new(buf), loc: 0 }
     }
 
-    pub fn memoryview<'py>(
-        &mut self, py: Python<'py>,
-    ) -> PyResult<&'py PyAny> {
-        let l = self.data.len_bytes();
-        let pt = self.data.buf_ptr();
-
-        Ok(unsafe {
-            let out = ffi::PyMemoryView_FromMemory(
-                pt as *mut c_char,
-                l as Py_ssize_t,
-                ffi::PyBUF_READ,
-            );
-            ffi::Py_INCREF(self.obj);
-            py.from_owned_ptr(out)
-        })
+    /// Only accepts python slices, not integers, lists or anything else. Slice
+    /// must not have a step.
+    pub fn __getitem__(&self, sl: &PySlice) -> PyResult<&[u8]> {
+        let indices = sl.indices(self.data.len() as c_long)?;
+        if indices.step > 1 {
+            return Err(PyValueError::new_err("shouldn't step"));
+        }
+        // becomes a bytes by copy
+        Ok(&self.data[indices.start as usize..indices.stop as usize])
     }
+
+    /// n<0 implies read all
+    pub fn read(&mut self, n: i64) -> &[u8] {
+        let here = match self.loc {
+            x if x < 0 => 0,
+            x if x > self.data.len() as i64 => self.data.len(),
+            x => x as usize,
+        };
+        if n >= 0 {
+            self.loc += n
+        } else {
+            self.loc = self.data.len() as i64
+        };
+        let there = match self.loc {
+            x if x < 0 => 0,
+            x if x > self.data.len() as i64 => self.data.len(),
+            x => x as usize,
+        };
+        &self.data[here..there]
+    }
+
+    pub fn tell(&self) -> i64 {
+        self.loc
+    }
+
+    pub fn seek(&mut self, n: i64, whence: Option<usize>) -> PyResult<i64> {
+        match whence {
+            None | Some(0) => self.loc = n,
+            Some(1) => self.loc = self.loc + n,
+            Some(2) => self.loc = (self.data.len() as i64 + n),
+            _ => return Err(PyValueError::new_err("bad whence")),
+        }
+        Ok(self.loc)
+    }
+
+    pub unsafe fn __getbuffer__(
+        self_: PyRefMut<'_, Self>, buf: *mut Py_buffer, flags: i32,
+    ) -> PyResult<()> {
+        let flags = flags as std::os::raw::c_int;
+        if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
+            return Err(PyBufferError::new_err("Object is not writable"));
+        }
+        (*buf).len = self_.data.len() as Py_ssize_t;
+        (*buf).buf = self_.data.as_ptr() as *mut std::os::raw::c_void;
+        (*buf).obj = self_.as_ptr() as *mut ffi::PyObject;
+        ffi::Py_INCREF((*buf).obj);
+        (*buf).readonly = 1;
+        (*buf).itemsize = 1;
+        (*buf).format = ptr::null_mut();
+        if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
+            // "format" field has been demanded
+            let msg = std::ffi::CStr::from_bytes_with_nul(b"B\0").unwrap();
+            (*buf).format = msg.as_ptr() as *mut _;
+        };
+        (*buf).ndim = 1;
+        (*buf).shape = ptr::null_mut();
+        (*buf).strides = ptr::null_mut();
+        (*buf).suboffsets = ptr::null_mut();
+        (*buf).internal = ptr::null_mut();
+        if (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND {
+            // "nd" flag is set, so require shape as a one-element array
+            (*buf).shape = (&((*buf).len)) as *const _ as *mut _;
+        };
+        if (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES {
+            // "strides" flag is set, so require strides as a one-element array
+            (*buf).strides = &((*buf).itemsize) as *const _ as *mut _;
+        };
+        Ok(())
+    }
+
+    pub unsafe fn __releasebuffer__(&self, _buf: *mut Py_buffer) -> () {}
 }
 
+/*
 impl Drop for ArcVec {
     fn drop(&mut self) {
-        unsafe { ffi::Py_DECREF(self.obj) };
+        println!("drop");
     }
 }
-
 #[pyfunction]
 pub fn pybuf_from_pybuf<'py>(
     py: Python<'py>, data: &PyAny,
@@ -91,3 +160,4 @@ pub fn pybytes_from_pybytes<'py>(
         }
     }
 }
+*/
