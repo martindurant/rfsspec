@@ -27,6 +27,6 @@ azure_storage = "0.11.0"
 azure_storage_blobs = "0.11.0"
 
 [profile.release]
-#opt-level = 3
-#lto = true
-#codegen-units = 1
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -3,7 +3,7 @@ use pyo3::ffi;
 use pyo3::ffi::{Py_buffer, Py_ssize_t};
 use pyo3::prelude::*;
 use pyo3::types::PySlice;
-use pyo3::{AsPyPointer, PyAny, PyResult, Python};
+use pyo3::{AsPyPointer, PyResult};
 use std::ffi::c_long;
 use std::ptr;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ impl ArcVec {
         match whence {
             None | Some(0) => self.loc = n,
             Some(1) => self.loc = self.loc + n,
-            Some(2) => self.loc = (self.data.len() as i64 + n),
+            Some(2) => self.loc = self.data.len() as i64 + n,
             _ => return Err(PyValueError::new_err("bad whence")),
         }
         Ok(self.loc)

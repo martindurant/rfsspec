@@ -413,6 +413,7 @@ async fn s3_get_one_range(
 }
 
 #[pyfunction]
+#[pyo3(signature = (path, region=None, profile=None, endpoint_url=None, anon=false, requester_pays=false))]
 fn s3_find<'py>(
     py: Python<'py>, path: &str, region: Option<&str>, profile: Option<&str>,
     endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
@@ -472,6 +473,7 @@ fn s3_find<'py>(
 }
 
 #[pyfunction]
+#[pyo3(signature = (path, region=None, profile=None, endpoint_url=None, anon=false, requester_pays=false))]
 fn s3_info(
     py: Python, path: &str, region: Option<&str>, profile: Option<&str>,
     endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
