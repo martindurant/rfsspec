@@ -5,10 +5,13 @@ use futures::future::join_all;
 #[macro_use]
 extern crate lazy_static;
 use google_auth::TokenManager;
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
 use reqwest;
 use std::collections::HashMap;
+use std::slice;
 use std::str::FromStr;
 use std::sync::Mutex;
 use tokio::io::AsyncWriteExt;
@@ -167,10 +170,11 @@ fn cat_ranges<'a>(
 }
 
 use aws_config::profile::ProfileFileCredentialsProvider;
-use aws_sdk_s3::model::RequestPayer;
-use aws_sdk_s3::{Client, Region};
+use aws_sdk_s3::types::RequestPayer;
+use aws_sdk_s3::Client;
 use aws_smithy_http::body::SdkBody;
 use aws_smithy_http::result::SdkError;
+use aws_types::region::Region;
 
 async fn s3(
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
@@ -250,10 +254,13 @@ fn s3_init_upload(
 
 #[pyfunction]
 fn s3_upload_chunk(
-    py: Python, url: &str, mpu: &str, data: Vec<u8>, part: i32,
+    py: Python, url: &str, mpu: &str, data: PyBuffer<u8>, part: i32,
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
 ) -> String {
     let out = url.split_once("/");
+    let pt = data.buf_ptr();
+    let le = data.len_bytes();
+    let data = unsafe { slice::from_raw_parts(pt as *const u8, le) };
     let coroutine = async {
         let s3_client = s3(region, profile, endpoint_url).await;
         let (bucket, key) = out.unwrap();
@@ -263,7 +270,7 @@ fn s3_upload_chunk(
             .key(key)
             .upload_id(mpu)
             .part_number(part)
-            .body(data.into())
+            .body(Bytes::from_static(data).into())
             .send()
             .await
             .unwrap()
@@ -272,7 +279,7 @@ fn s3_upload_chunk(
     res.e_tag().unwrap().to_string()
 }
 
-use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 
 /// parts: dict(part_number: etag)
 #[pyfunction]
@@ -515,9 +522,9 @@ fn s3_info(
 
 #[pyfunction]
 fn s3_cat_ranges<'py>(
-    py: Python<'py>, path: Vec<&str>, region: Option<&str>,
-    profile: Option<&str>, endpoint_url: Option<&str>, start: Vec<usize>,
-    end: Vec<usize>, requester_pays: bool, anon: bool,
+    py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
+    anon: bool, requester_pays: bool, profile: Option<&str>,
+    endpoint_url: Option<&str>, region: Option<&str>,
 ) -> &'py PyTuple {
     let mut result: Vec<Vec<u8>> = Vec::with_capacity(path.len());
     let coroutine = async {
@@ -576,7 +583,7 @@ async fn gcs_get_range(
 #[pyfunction]
 fn gcs_cat_ranges<'py>(
     py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
-    anon: bool, project: Option<&str>, requester_pays: bool,
+    requester_pays: bool, anon: bool, project: Option<&str>,
 ) -> &'py PyTuple {
     let mut result: Vec<Bytes> = Vec::with_capacity(path.len());
     let coroutine = async {
@@ -600,7 +607,6 @@ use azure_core::request_options::Range as ARange;
 use azure_storage::prelude::StorageCredentials;
 use azure_storage_blobs::prelude::ClientBuilder;
 use futures::StreamExt;
-use pyo3::exceptions::PyRuntimeError;
 
 async fn azure_get_range(
     client: ClientBuilder, path: &str, start: usize, end: usize,
@@ -630,7 +636,7 @@ async fn azure_get_range(
 #[pyfunction]
 fn azure_cat_ranges<'py>(
     py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
-    account: String, key: Option<String>, anon: bool,
+    anon: bool, account: String, key: Option<String>,
 ) -> &'py PyTuple {
     let mut result: Vec<Vec<u8>> = Vec::with_capacity(path.len());
     let cred = match anon {

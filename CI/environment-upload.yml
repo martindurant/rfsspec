@@ -5,3 +5,4 @@ dependencies:
   - python=3.10  # set by env
   - pip
   - anaconda-client
+  - twine

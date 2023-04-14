@@ -43,10 +43,11 @@ jobs:
         with:
           name: wheels
           path: dist
-  release:
+  release-anaconda-org:
+    # upload to anaconda.org on every new tag
     name: Release
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [ linux ]
     steps:
       - name: Checkout
