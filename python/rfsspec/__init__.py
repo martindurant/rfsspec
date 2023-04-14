@@ -1,3 +1,7 @@
+import importlib.metadata
+
+__version__ = importlib.metadata.version("rfsspec")
+
 from rfsspec.http import RustyHTTPFileSystem
 from rfsspec.s3 import RustyS3FileSystem
 from rfsspec.gcs import RustyGCSFileSystem
