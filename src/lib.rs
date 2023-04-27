@@ -254,13 +254,11 @@ fn s3_init_upload(
 
 #[pyfunction]
 fn s3_upload_chunk(
-    py: Python, url: &str, mpu: &str, data: PyBuffer<u8>, part: i32,
+    py: Python, url: &str, mpu: &str, data: &PyAny, part: i32,
     region: Option<&str>, profile: Option<&str>, endpoint_url: Option<&str>,
 ) -> String {
     let out = url.split_once("/");
-    let pt = data.buf_ptr();
-    let le = data.len_bytes();
-    let data = unsafe { slice::from_raw_parts(pt as *const u8, le) };
+    let data: &[u8] = py_to_byteslice(data);
     let coroutine = async {
         let s3_client = s3(region, profile, endpoint_url).await;
         let (bucket, key) = out.unwrap();
@@ -328,6 +326,15 @@ fn s3_complete_upload(
 
 use aws_smithy_http::byte_stream::ByteStream;
 
+/// No-copy view of internal buffer of any python object supporting buffers
+#[inline(always)]
+fn py_to_byteslice(value: &PyAny) -> &'static mut [u8] {
+    let buf: PyBuffer<u8> = value.extract().unwrap();
+    unsafe {
+        slice::from_raw_parts_mut(buf.buf_ptr() as *mut u8, buf.len_bytes())
+    }
+}
+
 #[pyfunction]
 fn s3_pipe(
     py: Python, data: &PyDict, region: Option<&str>, profile: Option<&str>,
@@ -338,9 +345,7 @@ fn s3_pipe(
         HashMap::with_capacity(data.len());
     data.iter().for_each(|(key, value)| {
         let url: &str = key.extract().unwrap();
-        let data: &PyBytes = value.extract().unwrap();
-        let b = data.as_bytes();
-        data_map.insert(url, b);
+        data_map.insert(url, py_to_byteslice(value));
     });
 
     // perform uploads

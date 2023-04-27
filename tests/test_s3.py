@@ -3,6 +3,14 @@ from s3fs.tests.test_s3fs import s3, s3_base, get_boto3_client, endpoint_uri, te
 import rfsspec
 
 
+def test_pipe_cat(s3):
+    fs = rfsspec.RustyS3FileSystem(endpoint_url=endpoint_uri)
+    fn = f"{test_bucket_name}/rusty1"
+    bs = b"0" * 50_000_000
+    fs.pipe(fn, bs)
+    assert fs.cat(fn) == bs
+
+
 def test_oneshot_roundtrip(s3):
 
     fs = rfsspec.RustyS3FileSystem(endpoint_url=endpoint_uri)
