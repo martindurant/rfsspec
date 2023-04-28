@@ -377,7 +377,7 @@ fn s3_pipe(
 }
 
 async fn s3_get_one_range(
-    url: &str, s3: Client, start: usize, end: usize, requester_pays: bool,
+    url: &str, s3: Client, start: i64, end: i64, requester_pays: bool,
     anon: bool,
 ) -> Vec<u8> {
     let out = url.split_once("/");
@@ -385,12 +385,15 @@ async fn s3_get_one_range(
         None => b"S3 ERROR: bad path".to_vec(),
         Some((bucket, key)) => {
             let mut resp = s3.get_object().bucket(bucket).key(key);
-            if (start > 0) | (end > 0) {
-                resp = resp.set_range(Some(format!(
-                    "bytes={}-{}",
-                    start,
-                    end - 1
-                )))
+            println!("{}", url);
+            if (start != 0) | (end != 0) {
+                let range = match end {
+                    0 => format!("bytes={}", start), // None/not set
+                    -1 => format!("bytes={}", start), // to the end
+                    _ => format!("bytes={}-{}", start, end),
+                };
+                println!("{}", range);
+                resp = resp.set_range(Some(range))
             };
             if requester_pays {
                 resp = resp.set_request_payer(Some(RequestPayer::Requester));
@@ -424,6 +427,7 @@ async fn s3_get_one_range(
     }
 }
 
+/// gets all keys and sizes below some root key prefix
 #[pyfunction]
 #[pyo3(signature = (path, region=None, profile=None, endpoint_url=None, anon=false, requester_pays=false))]
 fn s3_find<'py>(
@@ -484,6 +488,99 @@ fn s3_find<'py>(
     PyTuple::new(py, output.iter().map(|r| r.to_object(py)))
 }
 
+/// gets all keys and sizes below some root key prefix
+#[pyfunction]
+#[pyo3(signature = (path, region=None, profile=None, endpoint_url=None, anon=false, requester_pays=false))]
+fn s3_ls<'py>(
+    py: Python<'py>, path: &str, region: Option<&str>, profile: Option<&str>,
+    endpoint_url: Option<&str>, anon: bool, requester_pays: bool,
+) -> &'py PyTuple {
+    let mut output: Vec<HashMap<String, String>> = Vec::new();
+    let coroutine = async {
+        let s3_client = s3(region, profile, endpoint_url).await;
+        let out = path.split_once("/");
+        if let Some((bucket, key)) = out {
+            let mut tok: Option<String> = None;
+            let key = if !key.ends_with("/") {
+                format!("{}/", key)
+            } else {
+                key.into()
+            };
+
+            loop {
+                let mut resp = s3_client
+                    .list_objects_v2()
+                    .bucket(bucket)
+                    .prefix(key.clone())
+                    .delimiter("/");
+                if requester_pays {
+                    resp = resp.request_payer(RequestPayer::Requester);
+                };
+                if let Some(tt) = tok {
+                    resp = resp.continuation_token(tt);
+                }
+                let resp = if anon {
+                    resp.customize()
+                        .await
+                        .unwrap()
+                        .map_operation(make_unsigned)
+                        .unwrap()
+                        .send()
+                        .await
+                } else {
+                    resp.send().await
+                };
+                if let Ok(page) = resp {
+                    tok =
+                        page.next_continuation_token().map(|t| t.to_string());
+
+                    let cont = page.contents();
+                    if cont.is_some() {
+                        for ob in page.contents().unwrap().iter() {
+                            let mut h: HashMap<String, String> =
+                                HashMap::new();
+                            h.insert(
+                                "name".to_string(),
+                                format!("{}/{}", bucket, ob.key().unwrap()),
+                            );
+                            h.insert(
+                                "size".to_string(),
+                                ob.size().to_string(),
+                            );
+                            output.push(h)
+                        }
+                    }
+                    let cont = page.common_prefixes();
+                    if cont.is_some() {
+                        for ob in page.common_prefixes().unwrap().iter() {
+                            let mut h: HashMap<String, String> =
+                                HashMap::new();
+                            h.insert(
+                                "name".to_string(),
+                                format!("{}/{}", bucket, ob.prefix().unwrap()),
+                            );
+                            h.insert("size".to_string(), "0".into());
+                            h.insert("type".to_string(), "directory".into());
+                            output.push(h)
+                        }
+                    }
+
+                    if tok.is_none() {
+                        // last response
+                        break;
+                    }
+                } else {
+                    // no response
+                    break;
+                }
+            }
+        };
+    };
+    py.allow_threads(|| RUNTIME.block_on(coroutine));
+    PyTuple::new(py, output.iter().map(|r| r.to_object(py)))
+}
+
+/// gets the size of a single key
 #[pyfunction]
 #[pyo3(signature = (path, region=None, profile=None, endpoint_url=None, anon=false, requester_pays=false))]
 fn s3_info(
@@ -527,7 +624,7 @@ fn s3_info(
 
 #[pyfunction]
 fn s3_cat_ranges<'py>(
-    py: Python<'py>, path: Vec<&str>, start: Vec<usize>, end: Vec<usize>,
+    py: Python<'py>, path: Vec<&str>, start: Vec<i64>, end: Vec<i64>,
     anon: bool, requester_pays: bool, profile: Option<&str>,
     endpoint_url: Option<&str>, region: Option<&str>,
 ) -> &'py PyTuple {
@@ -677,6 +774,7 @@ fn rfsspec(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(azure_cat_ranges, m)?)?;
     m.add_function(wrap_pyfunction!(s3_info, m)?)?;
     m.add_function(wrap_pyfunction!(s3_find, m)?)?;
+    m.add_function(wrap_pyfunction!(s3_ls, m)?)?;
     m.add_function(wrap_pyfunction!(s3_init_upload, m)?)?;
     m.add_function(wrap_pyfunction!(s3_upload_chunk, m)?)?;
     m.add_function(wrap_pyfunction!(s3_pipe, m)?)?;
