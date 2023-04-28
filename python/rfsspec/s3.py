@@ -1,6 +1,6 @@
 from functools import lru_cache
 from rfsspec.rfsspec import (s3_cat_ranges, s3_info, s3_find, s3_pipe, s3_init_upload,
-                             s3_upload_chunk, s3_complete_upload)
+                             s3_upload_chunk, s3_complete_upload, s3_ls)
 
 from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 
@@ -9,6 +9,7 @@ class RustyS3FileSystem(AbstractFileSystem):
     """
 
     """
+    protocol = "s3"
 
     def __init__(
             self,
@@ -47,12 +48,16 @@ class RustyS3FileSystem(AbstractFileSystem):
         return s3_cat_ranges(urls, start=starts, end=ends, **self.kwargs)
 
     def info(self, path):
+        path = self._strip_protocol(path)
         info = s3_info(path, **self.kwargs)
-        info["type"] = "file"
+        info["name"] = path
+        info["size"] = int(info["size"])
+        info["type"] = "file" if info["size"] or not info["name"].endswith("/") else "directory"
         info["name"] = path
         return info
 
     def pipe(self, path, value=None):
+        path = self._strip_protocol(path)
         # pipes only just one for now, for use bu the file-like API
         if isinstance(path, str):
             path = {path: value}
@@ -62,13 +67,35 @@ class RustyS3FileSystem(AbstractFileSystem):
         s3_pipe(path, **kw)
 
     def _open(self, path, mode="rb", **kwargs):
+        path = self._strip_protocol(path)
         size = int(self.info(path)["size"]) if "r" in mode else None
         if "cache_type" not in kwargs:
             kwargs["cache_type"] = self.default_cache_type
         return RustyS3File(self, path, mode=mode, size=size, **kwargs)
 
-    def find(self, path):
-        return s3_find(path, **self.kwargs)
+    def find(self, path, detail=False):
+        out = s3_find(path, **self.kwargs)
+        if detail:
+            return out
+        return [o["name"] for o in out]
+
+    def ls(self, path, ):
+        path = self._strip_protocol(path)
+        out = s3_ls(path, **self.kwargs)
+        for o in out:
+            o["size"] = int(o["size"])
+            if o["size"] == 0 and o["name"].endswith("/"):
+                o["type"] = "directory"
+        return out
+
+    def isdir(self, path):
+        path = self._strip_protocol(path)
+        path = path.rstrip("/") + "/"
+        try:
+            out = self.ls(path)
+        except:
+            out = []
+        return len(out) > 1 or any(_["name"] == path for _ in out)
 
 
 class RustyS3File(AbstractBufferedFile):
